@@ -1,0 +1,14 @@
+[project]
+name = "max-memory"
+version = "0.1.1"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [ "toml==0.10.2",]
+
+[tool.setuptools.package-data]
+max_memory = [ "config.yaml",]
+
+[tool.pytest.ini_options]
+testpaths = [ "tests",]
+pythonpath = [ "src",]
