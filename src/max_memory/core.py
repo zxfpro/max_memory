@@ -2,7 +2,7 @@
 Author: 823042332@qq.com 823042332@qq.com
 Date: 2025-08-01 14:31:16
 LastEditors: 823042332@qq.com 823042332@qq.com
-LastEditTime: 2025-08-07 17:04:16
+LastEditTime: 2025-08-07 17:08:16
 FilePath: /max_memory/src/max_memory/core.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
@@ -23,6 +23,7 @@ from llama_index.core.postprocessor import SimilarityPostprocessor
 
 
 import json
+
 import pickle
 import os
 class Graphs():
@@ -68,19 +69,43 @@ class Graphs():
     def get_nodes_by_name(self,name):
         return self.find_nodes_by_attribute(self.G,"name",name)
     
-    def search_graph(self,result:[str],depth:int = 2, output_type = "prompt")-> set:
-        entities = set()
-        for i in result:
-            all_entity, _= self.search_networkx_depth_2(self.G,i)
-            print(all_entity,'all_entity')
-            entities |= {i}
-            entities |= all_entity
+    def search_graph(self, result_names: list[str], depth: int = 2, output_type: str = "prompt") -> set:
+        """
+        根据节点名称列表，在图中搜索相关实体。
+        
+        Args:
+            result_names (list[str]): 待搜索的节点名称列表。
+            depth (int): 搜索深度。
+            output_type (str): 输出类型，'prompt' 或 'entity'。
+        
+        Returns:
+            set: 根据 output_type 返回相应的结果集合。
+        """
+        all_found_entity_names = set()
+        
+        for name in result_names:
+            node_id = self.name2id.get(name) # 获取名称对应的ID
+            if node_id: # 只有当名称对应的ID存在时才进行搜索
+                # all_entity 包含的是节点ID
+                all_entity_ids, _ = self.search_networkx_depth_2(self.G, node_id)
+                # 将找到的实体ID转换为名称并添加到集合中
+                for entity_id in all_entity_ids:
+                    # 从 id2entities 获取实体字典，再获取其name
+                    entity_data = self.id2entities.get(entity_id)
+                    if entity_data and 'name' in entity_data:
+                        all_found_entity_names.add(entity_data['name'])
+                all_found_entity_names.add(name) # 确保原始查询的名称也被包含进来
+            else:
+                print(f"Warning: Node with name '{name}' not found in name2id mapping.")
+
         if output_type == 'prompt':
-            result = self.get_prompt(entities)
+            # get_prompt 期望的是实体名称列表
+            result = self.get_prompt(list(all_found_entity_names))
         elif output_type == 'entity':
-            result = self.get_entitys(entities)
+            # get_entitys 期望的是实体名称集合
+            result = self.get_entitys(all_found_entity_names)
         else:
-            raise TypeError('错误')
+            raise TypeError('Invalid output_type. Must be "prompt" or "entity".')
         return result
 
     def search_networkx_depth_1(self,graph, start_node):
@@ -109,18 +134,39 @@ class Graphs():
     def get_prompt(self,entities_names:list[str]) -> str:
         entity_prompt = "## 名词解释" + '\n    '
         for i in entities_names:
-            self.id2entities[self.name2id[i]]
-            entity_prompt += i + ":" + (self.name2entities[i].describe or "常规理解")  + "\n    "
+            # 这里的self.name2entities 不存在了，需要改为从 self.id2entities 通过 self.name2id 获取
+            # 确保获取到的描述是字符串类型
+            entity_id = self.name2id.get(i)
+            if entity_id and entity_id in self.id2entities:
+                entity_data = self.id2entities[entity_id]
+                # 假设 describe 字段在 id2entities 存储的字典中是字符串或可以安全转换为字符串
+                describe_text = entity_data.get('describe') or "常规理解"
+                entity_prompt += i + ":" + str(describe_text) + "\n    "
+            else:
+                entity_prompt += i + ": 未知实体描述\n    "
         return entity_prompt
 
     def get_entitys(self,entities_names:set[str]):
-        return [self.get_entity_by_name(i) for i in entities_names]
+        # get_entity_by_name 在 Graphs 中不存在，需要从 self.id2entities 通过 self.name2id 获取
+        # 且返回的是原始的实体字典，而不是 Entity 对象
+        found_entities = []
+        for name in entities_names:
+            entity_id = self.name2id.get(name)
+            if entity_id and entity_id in self.id2entities:
+                found_entities.append(self.id2entities[entity_id])
+        return found_entities
 
     def get_entity_by_id(self,id:str):
         return self.id2entities.get(id)
 
+    # 移除或修改 get_entity_by_name，因为它在 Graphs 类中不再直接管理 Entity 对象，
+    # 而是通过 id2entities 和 name2id 映射来处理原始数据字典。
+    # 这里我们模拟一个根据name获取原始实体数据字典的方法。
     def get_entity_by_name(self,name:str):
-        return self.name2entities.get(name)
+        entity_id = self.name2id.get(name)
+        if entity_id:
+            return self.id2entities.get(entity_id)
+        return None
 
 
 class Entity_Graph():
@@ -130,8 +176,11 @@ class Entity_Graph():
     def update(self,index,graph,data_dict):
         entities_relations, id2entities, name2id = self._process(data_dict)
         graph.update(entities_relations, id2entities, name2id)
+        # 在更新后，确保 G.nodes 中有 'name' 属性，因为 Graph.update 接受的是 (id, dic)
+        # 这里的 graph.G.nodes[i].get("name") 应该能正确获取
         for i in list(graph.G.nodes):
-            doc = Document(text = graph.G.nodes[i].get("name"),
+            node_data = graph.G.nodes[i] # 获取节点属性字典
+            doc = Document(text = node_data.get("name"), # 使用节点的 'name' 属性作为文本
                             metadata = {'type':"entity","id":i},
                             excluded_embed_metadata_keys = ['type','id'],
                             id_=i)
@@ -148,9 +197,10 @@ class Entity_Graph():
 
     def search(self,text,depth = 2,output_type = "prompt"):
         assert self._build == True
-        result = self.postprocess.postprocess_nodes(self.retriver.retrieve(text))
-        result_text = [i.text for i in result]
-        result = self.G.search_graph(result_text,depth =depth, output_type = output_type)
+        result_nodes = self.postprocess.postprocess_nodes(self.retriver.retrieve(text))
+        # result_text 现在是包含节点名称的列表，可以直接传递给 Graphs.search_graph
+        result_names = [node.text for node in result_nodes]
+        result = self.G.search_graph(result_names, depth=depth, output_type=output_type)
         return result
 
     def _process(self,data_dict:dict):
@@ -159,27 +209,39 @@ class Entity_Graph():
             for i in data_dict.get('entities_relations'):
                 if self._identify_string_type(i.get('object_id')) == "GENERIC_STRING":
                     x.append({'id':str(uuid.uuid4())[:16],
-                              "name":i.get('object_id')})
+                              "name":i.get('object_id'), # 确保新生成的实体有name属性
+                              'describe': [] # 为新生成的实体添加默认的 describe 字段，与现有结构保持一致
+                              })
             
             entities = x + data_dict.get('entities')
 
             id2entities = {i.get('id'): i for i in entities}
-            name2id = {i.get('name'):i.get('id') for i in entities}
-
+            name2id = {i.get('name'):i.get('id') for i in entities if i.get('name') is not None} # 确保name存在
 
             entities_relations = []
             for i in data_dict.get('entities_relations'):
-                if self._identify_string_type(i.get('object_id')) == "GENERIC_STRING":
-                    object_id = name2id[i.get('object_id')]
+                subject_id = i.get('subject_id')
+                object_id_raw = i.get('object_id')
+
+                if self._identify_string_type(object_id_raw) == "GENERIC_STRING":
+                    object_id = name2id.get(object_id_raw) # 从name2id获取object_id
+                    if object_id is None: # 如果未能找到，可能需要创建或跳过
+                        print(f"Warning: Object '{object_id_raw}' not found in name2id map during relation processing. Skipping relation.")
+                        continue
                 else:
-                    object_id = i.get('object_id')
+                    object_id = object_id_raw
                 
-                entities_relations.append(
-                        {
-                            "subject_id":i.get('subject_id'),
-                            "proportion":0.8,
-                            "object_id":object_id,
-                        })
+                # 检查 subject_id 和 object_id 是否都存在于 id2entities 中
+                if subject_id in id2entities and object_id in id2entities:
+                    entities_relations.append(
+                            {
+                                "subject_id": subject_id,
+                                "proportion": 0.8,
+                                "object_id": object_id,
+                            })
+                else:
+                    print(f"Warning: Relation involving unknown subject_id '{subject_id}' or object_id '{object_id}'. Skipping relation.")
+
             return entities_relations, id2entities, name2id
         else:
             return [],{},{}
@@ -204,8 +266,8 @@ class Entity_Graph():
                 return 'UUID_ENTITY'
         
         return 'GENERIC_STRING'
-    
-    
+
+
 # class Event_Graph():
 #     def __init__(self,data_dict:dict):
 #         self.G = nx.DiGraph() # DG
