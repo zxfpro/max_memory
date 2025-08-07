@@ -2,8 +2,11 @@ README.md
 pyproject.toml
 src/max_memory/__init__.py
 src/max_memory/core.py
+src/max_memory/embedding.py
 src/max_memory/log.py
+src/max_memory/prompt.py
 src/max_memory/server.py
+src/max_memory/utils.py
 src/max_memory.egg-info/PKG-INFO
 src/max_memory.egg-info/SOURCES.txt
 src/max_memory.egg-info/dependency_links.txt
