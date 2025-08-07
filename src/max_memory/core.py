@@ -2,7 +2,7 @@
 Author: 823042332@qq.com 823042332@qq.com
 Date: 2025-08-01 14:31:16
 LastEditors: 823042332@qq.com 823042332@qq.com
-LastEditTime: 2025-08-07 10:00:57
+LastEditTime: 2025-08-07 14:42:35
 FilePath: /max_memory/src/max_memory/core.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
@@ -23,6 +23,7 @@ from llama_index.core.vector_stores import FilterOperator, FilterCondition
 from llama_index.core.postprocessor import SimilarityPostprocessor
 
 
+import json
 
 class Entity:
     """
@@ -30,16 +31,79 @@ class Entity:
     每个节点包含一个值和指向下一个节点的引用。
     """
     def __init__(self, data):
-        self.data = data  # 节点存储的数据
+        self.data = data  # 节点存储的原始数据字典
         self.id = data.get('id')
         self.name = data.get('name')
         self.aliases = data.get("aliases")
-        self.describe = ';'.join(data.get('describe',[]))
-        self.next = []  # 指向下一个节点的引用，初始为 None
+        self.describe = ';'.join(data.get('describe', []))
+        # self.next 现在存放的是其他 Entity 的 ID 字符串列表
+        # 初始值通常应该从 data 中获取，如果 data 中没有，则为空列表
+        self.next = data.get('next', []) # 假设原始数据中next就是ID列表
 
     def __repr__(self):
         """用于调试，方便打印节点信息"""
-        return f"Entity: ({self.data})({self.next})"
+        # 由于 next 是 ID 字符串列表，直接打印即可
+        return (f"Entity(id='{self.id}', name='{self.name}', "
+                f"aliases={self.aliases}, describe='{self.describe}', "
+                f"next_ids={self.next})")
+
+    def __str__(self):
+        return self.__repr__()
+
+    def to_dict(self):
+        """
+        将 Entity 实例转换为一个 Python 字典。
+        next 属性直接作为 ID 字符串列表存储。
+        """
+        entity_dict = {
+            "id": self.id,
+            "name": self.name,
+            "aliases": self.aliases,
+            "describe": self.describe,
+            # 将 next 属性直接作为 ID 列表添加到字典中
+            "next": self.next,
+            # 可以选择性地保留原始的 data 字段，如果它包含额外的信息
+            "data": self.data
+        }
+        return entity_dict
+
+    @classmethod
+    def from_dict(cls, data_dict):
+        """
+        从一个字典创建 Entity 实例。
+        next 属性直接从字典中获取 ID 字符串列表。
+        :param data_dict: 包含 Entity 数据的字典。
+        :return: Entity 实例。
+        """
+        # 首先，我们需要从字典中还原原始的data字段，或者直接构造一个用于初始化的字典
+        # 如果 to_dict 中包含了 'data' 字段，我们优先使用它作为原始 data
+        original_data_for_init = data_dict.get('data', {})
+
+        # 如果没有 'data' 字段，或者 'data' 字段是空的，那么从传入的 data_dict 中构建
+        if not original_data_for_init:
+            original_data_for_init = {
+                'id': data_dict.get('id'),
+                'name': data_dict.get('name'),
+                'aliases': data_dict.get('aliases'),
+                # 如果describe是字符串，需要将其还原为列表以便于原始数据结构
+                'describe': data_dict.get('describe').split(';') if data_dict.get('describe') else [],
+                'next': data_dict.get('next', []) # 重要的是将 next 也还原到原始 data
+            }
+
+        # 创建 Entity 实例
+        # 注意：这里我们假设 Entity 的 __init__ 可以直接处理包含 'next' 键的 data 字典
+        # 如果你的 Entity.__init__ 不会从 data 中自动设置 self.next，
+        # 则需要在 Entity 实例创建后手动设置：entity_instance.next = data_dict.get('next', [])
+        entity_instance = cls(original_data_for_init)
+
+        # 确保 next 属性被正确设置，以防原始 data 中没有
+        if 'next' in data_dict and isinstance(data_dict['next'], list):
+            entity_instance.next = data_dict['next']
+        else:
+            entity_instance.next = [] # 确保即使没有next字段，也初始化为空列表
+
+        return entity_instance
+
 
 class Events:
     """
@@ -57,113 +121,174 @@ class Events:
     def __repr__(self):
         """用于调试，方便打印节点信息"""
         return f"Events: ({self.data})({self.next})"
+    
+
+
+import json
+
+class Relation:
+    """
+    表示两个实体之间关系的类。
+    每个关系包含 subject_id, object_id, proportion，以及可选的额外数据。
+    """
+    def __init__(self, data):
+        """
+        初始化 Relation 实例。
+        :param data: 包含关系所有数据的字典。
+                     期望包含 'subject_id', 'object_id', 'proportion'。
+                     可以包含 'relation_type' 或其他自定义字段。
+        """
+        if not isinstance(data, dict):
+            raise TypeError("Initialization data must be a dictionary.")
+
+        self.data = data.copy()  # 存储原始数据，使用 .copy() 防止外部修改影响内部状态
+
+        # 从原始数据中提取核心属性
+        self.subject_id = self.data.get("subject_id")
+        self.object_id = self.data.get("object_id")
+        self.proportion = self.data.get("proportion") # 可以是 None，如果原始数据中没有
+
+        # 校验核心属性是否存在
+        if self.subject_id is None:
+            raise ValueError("Relation data must contain 'subject_id'.")
+        if self.object_id is None:
+            raise ValueError("Relation data must contain 'object_id'.")
+
+        # 针对 proportion 进行更健壮的处理：
+        # 如果原始数据中没有 proportion 或者不是数字，可以给一个默认值
+        if not isinstance(self.proportion, (int, float)):
+            # 如果 proportion 不存在或类型不正确，给一个默认值 1.0
+            print(f"Warning: 'proportion' missing or invalid in data for subject_id={self.subject_id}. Defaulting to 1.0.")
+            self.proportion = 1.0
+        else:
+            self.proportion = float(self.proportion) # 确保是浮点数
+
+        # 示例：你可以在这里提取其他你关心的属性，比如 relation_type
+        self.relation_type = self.data.get("relation_type")
+
+
+    def __repr__(self):
+        """用于调试，方便打印关系信息"""
+        type_str = f", type='{self.relation_type}'" if self.relation_type else ""
+        return (f"Relation(subject_id='{self.subject_id}', "
+                f"object_id='{self.object_id}', "
+                f"proportion={self.proportion}{type_str})")
+
+    def __str__(self):
+        return self.__repr__()
+
+    def to_dict(self):
+        """
+        将 Relation 实例及其存储的原始数据转换为一个 Python 字典，便于序列化。
+        直接返回 self.data 的副本，确保所有原始信息被保留。
+        """
+        return self.data.copy()
+
+    @classmethod
+    def from_dict(cls, data_dict):
+        """
+        从一个字典创建 Relation 实例。
+        直接将传入的字典作为原始数据传递给 __init__ 方法。
+        :param data_dict: 包含关系数据的字典。
+        :return: Relation 实例。
+        """
+        if not isinstance(data_dict, dict):
+            raise TypeError("Input for from_dict must be a dictionary.")
+        # 直接将 data_dict 传递给 __init__，因为它就是我们需要的原始数据字典
+        return cls(data_dict)
+
+    
+    # --- 实现去重功能的核心 ---
+
+    def __eq__(self, other):
+        """
+        定义两个 Relation 对象相等的条件。
+        如果 subject_id, object_id, 和 relation_type 都相同，则认为它们相等。
+        """
+        if not isinstance(other, Relation):
+            return NotImplemented # 或者返回 False
+        return (self.subject_id == other.subject_id and
+                self.object_id == other.object_id and
+                self.relation_type == other.relation_type)
+
+    def __hash__(self):
+        """
+        定义 Relation 对象的哈希值。
+        哈希值基于 subject_id, object_id, 和 relation_type。
+        只有可哈希的对象才能作为 set 的元素或 dict 的键。
+        """
+        # 使用 tuple 的 hash 值，因为 tuple 是不可变的且可哈希的
+        return hash((self.subject_id, self.object_id, self.relation_type))
+
+
 
 import os
 class Graphs():
-    def __init__(self,path = "save.gml"):
+    def __init__(self,path = "save.gml",json_path = "save.json"):
         self.G = nx.Graph()
+        # self.entities = []
+        self.entities_relations = {}
+        self.id2entities = {}
+        self.name2entities = {}
+        #TODO2
         self.path = path
+        self.json_path = json_path
         if os.path.exists(self.path):
             self.load_graph()
 
     def save_graph(self): # 2
         nx.write_graphml(self.G, self.path)
-        
+        data = {
+            "entities_relations":{v.to_dict() for v in self.entities_relations}, 
+            "id2entities":{ k : v.to_dict() for k,v in self.id2entities.items()},
+            "name2entities":{ k : v.to_dict() for k,v in self.name2entities.items()},
+        }
+        with open(self.json_path,'w') as f:
+            f.write(json.dumps(data,ensure_ascii=False))
+
     def load_graph(self): # 3
         self.G = nx.read_graphml(self.path)
+        with open(self.json_path,'r') as f:
+            result = f.read()
+        data = json.loads(result)
+        self.entities_relations = {Relation.from_dict(v) for v in data.get("entities_relations")}
+        self.id2entities = {k : Entity.from_dict(v) for k,v in data.get("id2entities").items()}
+        self.name2entities = {k : Entity.from_dict(v) for k,v in data.get("name2entities").items()}
 
     def show_graph(self,path = "basic.html"): # 4
         nt = Network('1000px', '1000px')
         nt.from_nx(self.G)
         nt.write_html(path, open_browser=False,notebook=False)
 
-    def as_g_retriver(self):
-        pass
 
-        
+    #TODO6 要考虑到融合
+    def update(self,id2entities,name2entities,entities_relations):
+        self.id2entities.update(id2entities)
+        self.name2entities.update(name2entities)
+        self.entities_relations.update(entities_relations)
 
-class Entity_Graph():
-    def __init__(self,data_dict:dict = None,similarity_cutoff = 0.9):
-        self.postprocess = SimilarityPostprocessor(similarity_cutoff = similarity_cutoff)
-        entities, entities_relations, id2entities, name2entities = self.process(data_dict)
-        self.entities = entities
-        self.entities_relations = entities_relations
-        self.id2entities = id2entities
-        self.name2entities = name2entities
-
-    def process(self,data_dict:dict):
-        if data_dict:
-            x = []
-            for i in data_dict.get('entities_relations'):
-                if self._identify_string_type(i.get('object_id')) == "GENERIC_STRING":
-                    x.append({'id':str(uuid.uuid4())[:16],
-                            "name":i.get('object_id')})
-
-            entities = x + data_dict.get('entities')
-
-            id2entities = {i.get('id'): Entity(i) for i in entities}
-            name2entities = {v.name: v for v in id2entities.values()}
-
-
-            entities_relations = []
-            for i in data_dict.get('entities_relations'):
-                if self._identify_string_type(i.get('object_id')) == "GENERIC_STRING":
-                    object_id = name2entities[i.get('object_id')].id
-                else:
-                    object_id = i.get('object_id')
-
-                id2entities[i.get('subject_id')].next.append(object_id)
-                entities_relations.append({
-                "subject_id":i.get('subject_id'),
-                "proportion":0.8,
-                "object_id":object_id,
-                })
-            return entities, entities_relations, id2entities, name2entities
-        else:
-            return [],[],{},{}
-
-    def update(self,index,G):
-        self._update_graph(G=G)
-        self._update_index(index,G =G)
-
-    def _update_graph(self,G):# 1
         edges_graph = [(self.id2entities[i.get('subject_id')].name,
                           self.id2entities[i.get('object_id')].name,
                           {'title':i.get("relation")}) 
                        for i in self.entities_relations]
         nodes_graph = [(name,{"title":obj.describe}) 
                        for name,obj in self.name2entities.items()]
-        G.add_nodes_from(nodes_graph)
-        G.add_edges_from(edges_graph)
-        G.save_graph()
-
-    def _update_index(self,index,G):
-        for i in list(G.nodes):
-            doc = Document(text = i,metadata = {'type':"entity"},excluded_embed_metadata_keys = ['type'],id_=self.name2entities.get(i).id)
-            index.update(document=doc)
-
-    def build(self,index,G,similarity_top_k:int = 2):
-        self.retriver = index.as_retriever(similarity_top_k=similarity_top_k,
-                                            filters = MetadataFilters(
-                                                        filters=[MetadataFilter(key="type", operator=FilterOperator.EQ, value="entity"),]
-                                            ))
-        self.G = G
-
-    def _retriver_search(self,text:str)->object:
-        result = self.postprocess.postprocess_nodes(self.retriver.retrieve(text))
-        return result
+        self.G.add_nodes_from(nodes_graph)
+        self.G.add_edges_from(edges_graph)
+        self.G.save_graph()
 
 
 
-    def search(self,text:str,depth:int = 2, output_type = "prompt")-> set:
+    def search_graph(self,result:[str],depth:int = 2, output_type = "prompt")-> set:
+        # result 输入 retriver 以后产出的Documents 然后只保留其i.text 构成列表,  理论上, 这些都是图的结点
+        # result = self._retriver_search(text)
         entities = set()
-        result = self._retriver_search(text)
         for i in result:
             try:
-                all_entity, _ = self.search_networkx_depth_2(self.G,i.text) # 深度为2的搜索  
+                all_entity, _ = self.search_networkx_depth_2(self.G,i) # 深度为2的搜索  
             except ValueError as e:
                 continue
-            entities |= {i.text}
+            entities |= {i}
             entities |= all_entity
         if output_type == 'prompt':
             result = self.get_prompt(entities)
@@ -172,6 +297,7 @@ class Entity_Graph():
         else:
             raise TypeError('错误')
         return result
+
     
     def search_networkx_depth_1(self,graph, start_node):
         """
@@ -221,6 +347,7 @@ class Entity_Graph():
 
         return all_reachable_nodes, depth_2_nodes
 
+    
     def get_prompt(self,entities_names:list[str]) -> str:
         """拼接prompt
 
@@ -238,13 +365,84 @@ class Entity_Graph():
     def get_entitys(self,entities_names:set[str]) -> list[Entity]:
         # entities_names -> [Entity]
         return [self.get_entity_by_name(i) for i in entities_names]
-
+    
     def get_entity_by_id(self,id:str)->Entity:
         return self.id2entities.get(id)
     
     def get_entity_by_name(self,name:str) -> Entity:
         return self.name2entities.get(name)
-    
+
+
+class Entity_Graph():
+    """
+    有两种使用方式 
+        1 没有data_dict 那么就直接build 然后使用, 使用的是之前在G 和 index 中的存留数据
+        2 有data_dict 那么就要在之前使用update 来做以下, 然后build 和使用
+    """
+    def __init__(self):
+        self._build =  False
+
+    def update(self,index,G,data_dict):
+        entities_relations, id2entities, name2entities = self._process(data_dict)
+        #TODO1
+        G.update(id2entities,name2entities,entities_relations)
+        for i in list(G.nodes):
+            doc = Document(text = i,metadata = {'type':"entity"},
+                           excluded_embed_metadata_keys = ['type'],
+                           id_=name2entities.get(i).id)
+            index.update(document=doc)
+
+    def build(self,index,G,similarity_top_k:int = 2,similarity_cutoff = 0.8):
+        self.postprocess = SimilarityPostprocessor(similarity_cutoff = similarity_cutoff)
+        self.retriver = index.as_retriever(similarity_top_k=similarity_top_k,
+                                            filters = MetadataFilters(
+                                                        filters=[MetadataFilter(key="type", operator=FilterOperator.EQ, value="entity"),]
+                                            ))
+        self.G = G
+        self._build = True
+
+    def search(self,text,depth = 2,output_type = "prompt"):
+        # output_type == prompt or entity
+        assert self._build == True
+        #TODO3
+        result = self.postprocess.postprocess_nodes(self.retriver.retrieve(text))
+        result_text = [i.text for i in result]
+        #TODO5
+        self.G.search_graph(result_text,depth =depth, output_type = output_type)
+
+
+    def _process(self,data_dict:dict):
+        if data_dict:
+            x = []
+            for i in data_dict.get('entities_relations'):
+                if self._identify_string_type(i.get('object_id')) == "GENERIC_STRING":
+                    x.append({'id':str(uuid.uuid4())[:16],
+                            "name":i.get('object_id')})
+
+            entities = x + data_dict.get('entities')
+
+            id2entities = {i.get('id'): Entity(i) for i in entities}
+            name2entities = {v.name: v for v in id2entities.values()}
+
+
+            entities_relations = set()
+            for i in data_dict.get('entities_relations'):
+                if self._identify_string_type(i.get('object_id')) == "GENERIC_STRING":
+                    object_id = name2entities[i.get('object_id')].id
+                else:
+                    object_id = i.get('object_id')
+
+                id2entities[i.get('subject_id')].next.append(object_id)
+                entities_relations.add(
+                        Relation.from_dict({
+                        "subject_id":i.get('subject_id'),
+                        "proportion":0.8,
+                        "object_id":object_id,
+                        }))
+            return entities_relations, id2entities, name2entities
+        else:
+            return {},{},{}
+
     def _identify_string_type(self,text: str) -> str:
         """
         根据给定的字符串，判断其是UUID的一部分（或完整UUID）还是一个普通字符串。
@@ -288,7 +486,7 @@ class Entity_Graph():
 
         # 3. 如果以上条件都不满足，则认为是普通字符串
         return 'GENERIC_STRING'
-    
+
 
 class Event_Graph():
     def __init__(self,data_dict:dict):
