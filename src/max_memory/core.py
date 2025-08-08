@@ -187,7 +187,6 @@ from llama_index.core.vector_stores import (
     FilterOperator,
 )
 from llama_index.core.vector_stores import FilterOperator, FilterCondition
-from llama_index.core.postprocessor import SimilarityPostprocessor
 import json
 import pickle
 import os
@@ -232,21 +231,49 @@ class Graphs():
         self.name2id.update(name2id) # 合并 name2id
         self.id2entities.update(id2entities) # 合并 id2entities
 
-    def merge_other_graph(self, other_graph_instance: 'Graphs', node_mapping: dict = None):
+    def merge_other_graph(self, other_graph_instance: 'Graphs', node_mapping_by_name: dict = None):
         """
         将另一个 Graphs 实例的图合并到当前实例中。
         同时会更新当前实例的 name2id 和 id2entities 映射。
 
         Args:
             other_graph_instance (Graphs): 另一个 Graphs 实例。
-            node_mapping (dict, optional): 节点名称的映射关系。
+            node_mapping_by_name (dict, optional): 节点名称的映射关系。
                                            键是 other_graph_instance 中的原始节点名称，
                                            值是合并图中目标节点名称。
+                                           例如：{"join": "David", "Robert": "Bob"}。
                                            默认为 None，表示不进行额外映射。
         """
+        # 将基于名称的映射转换为基于ID的映射，以适应 merge_graphs_with_advanced_aliases 函数
+        node_mapping_by_id = {}
+        if node_mapping_by_name:
+            for original_name_in_other, target_name_in_merged in node_mapping_by_name.items():
+                # 获取 other_graph_instance 中原始名称对应的ID
+                original_id_in_other_list = other_graph_instance.get_nodes_by_name(original_name_in_other)
+                if not original_id_in_other_list:
+                    print(f"Warning: Node '{original_name_in_other}' not found in other_graph_instance. Skipping mapping.")
+                    continue
+                # 假设 get_nodes_by_name 返回的列表中的第一个元素就是我们想要映射的节点ID
+                original_id_in_other = original_id_in_other_list[0][0] # (node_id, node_data)
+
+                # 获取当前图 self.G 中目标名称对应的ID
+                target_id_in_merged_list = self.get_nodes_by_name(target_name_in_merged)
+                if not target_id_in_merged_list:
+                    # 如果目标名称在当前图中不存在，则使用目标名称本身作为ID（这将导致新节点创建）
+                    # 或者，如果原函数期望的是一个ID，这里需要确保传入的是一个有效的ID格式
+                    # 由于 merge_graphs_with_advanced_aliases 接受的是 node_name 作为键值，
+                    # 这里的 target_name_in_merged 可以直接作为目标ID使用，
+                    # 因为它最终会被映射到 merged_graph 中的对应节点。
+                    target_id_in_merged = target_name_in_merged
+                else:
+                    target_id_in_merged = target_id_in_merged_list[0][0] # (node_id, node_data)
+
+                node_mapping_by_id[original_id_in_other] = target_id_in_merged
+
+
         # 使用 merge_graphs_with_advanced_aliases 函数合并图
         # 当前实例的 G 作为 graph1 (优先级高), other_graph_instance.G 作为 graph2
-        merged_nx_graph = merge_graphs_with_advanced_aliases(self.G, other_graph_instance.G, node_mapping)
+        merged_nx_graph = merge_graphs_with_advanced_aliases(self.G, other_graph_instance.G, node_mapping_by_id)
         self.G = merged_nx_graph
 
         # 更新 name2id 和 id2entities
