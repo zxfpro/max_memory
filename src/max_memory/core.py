@@ -455,6 +455,24 @@ class Graphs():
         return find_related_edges_greedy_flexible_networkx(self.G, nodes_to_check)
 
 
+# def get_prompt(self,events:list[dict]):
+#     events_prompt = '## 过往事件\n'
+#     for i in events:
+#         if i.get(0):
+#             for i1 in i.get(0):
+#                 events_prompt += '----'
+#                 events_prompt += i1
+#                 events_prompt += '\n'
+
+#         if i.get(1):
+#             for i2 in i.get(1):
+#                 events_prompt += '----'
+#                 events_prompt += '----'
+#                 events_prompt += i2
+#                 events_prompt += '\n'
+
+#     return events_prompt
+
 class DiGraphs(Graphs):
     def __init__(self, path="save_digraph.pickle"):
         super().__init__(path)
@@ -499,32 +517,7 @@ class DiGraphs(Graphs):
         nt.from_nx(self.G)
         nt.write_html(path, open_browser=False, notebook=False)
 
-#def event_process(self, data_dict:dict):
-#         events = data_dict.get('events')
 
-#         id2events = {i.get('id'): Events(i) for i in events}
-#         name2events = {v.name: v for v in id2events.values()}
-
-
-#         events_relations = self.deal_(data_dict.get("events_relations"))
-
-#         for i in events_relations:
-#             object_id = i.get('object_id')
-#             id2events[i.get('subject_id')].next.append(object_id)
-
-#         return events, events_relations, id2events, name2events
-
-#    def deal_(self,data):
-#         result = []
-#         for entry in data:
-#             subject_id = entry['subject_id']
-#             sub_events_ids = entry['sub_events_id']
-#             for sub_event_id in sub_events_ids:
-#                 result.append({'subject_id': subject_id,
-#                                "proportion":0.8,
-#                                'object_id': sub_event_id})
-
-#         return result
 
 class Entity_Graph():
     def __init__(self):
@@ -559,7 +552,6 @@ class Entity_Graph():
         result_names = [node.text for node in result_nodes]
         result = self.G.search_graph(result_names, depth=depth, output_type=output_type)
         return result
-
     def _process(self,data_dict:dict):
         if data_dict:
             x = []
@@ -629,9 +621,9 @@ class Event_Graph():
     def __init__(self):
         self._build = False
 
-    def update(self, index, graph, data_dict):
-        events_relations, id2events, name2events = self._process(data_dict)
-        graph.update(events_relations, id2events, name2events)
+    def update(self, index, graph:DiGraphs, data_dict):
+        events_relations, id2events, name2id = self._process(data_dict)
+        graph.update(events_relations, id2events, name2id)
         for i in list(graph.G.nodes):
             node_data = graph.G.nodes[i]
             doc = Document(text=node_data.get("name"),
@@ -655,14 +647,14 @@ class Event_Graph():
         result_names = [node.text for node in result_nodes]
         result = self.G.search_graph(result_names, depth=depth, output_type=output_type)
         return result
-
+    #TODO1
     def _process(self, data_dict: dict):
         if data_dict:
             events = data_dict.get('events', [])
             events_relations_raw = data_dict.get('events_relations', [])
 
             id2events = {event.get('id'): event for event in events if event.get('id')}
-            name2events = {event.get('name'): event.get('id') for event in events if event.get('name') is not None}
+            name2id = {event.get('name'): event.get('id') for event in events if event.get('name') is not None}
 
             # 处理 events_relations，将其转换为统一的 subject_id, object_id 格式
             processed_relations = []
@@ -681,28 +673,98 @@ class Event_Graph():
                     else:
                         print(f"Warning: Event relation involving unknown subject_id '{subject_id}' or object_id '{sub_event_id}'. Skipping relation.")
 
-            return processed_relations, id2events, name2events
+            return processed_relations, id2events, name2id
         else:
             return [], {}, {}
 
-    def _identify_string_type(self, text: str) -> str:
-        # 这个方法在 Event_Graph 的 _process 中没有直接用到，但为了保持与 Entity_Graph 结构一致性保留
-        if not isinstance(text, str):
-            return 'GENERIC_STRING'
-        
-        text_lower = text.lower()
 
-        try:
-            uuid_obj = uuid.UUID(text_lower)
-            if str(uuid_obj) == text_lower or str(uuid_obj).replace('-', '') == text_lower.replace('-', ''):
-                return 'UUID_ENTITY'
-        except ValueError:
-            pass
 
-        uuid_char_pattern = re.compile(r"^[0-9a-f-]+$")
+# class Event_Graph():
+#     def __init__(self,data_dict:dict):
+#         self.G = nx.DiGraph() # DG
+#         self.postprocess = SimilarityPostprocessor(similarity_cutoff=0.9)
+#         events, events_relations, id2events, name2events = self.process(data_dict)
+#         self.events = events
+#         self.events_relations = events_relations
+#         self.id2events = id2events
+#         self.name2events = name2events
 
-        if uuid_char_pattern.fullmatch(text_lower):
-            if len(text) > 1 and any(c.isalnum() for c in text):
-                return 'UUID_ENTITY'
-        
-        return 'GENERIC_STRING'
+    
+    
+#     def retrive(self,text,depth = 2):
+#         result = self.retriver_search(text)
+#         xxp = []
+#         for i in result:
+#             result = self.find_nodes_by_depth(self.G, i.text, max_depth = depth)
+#             xxp.append(result)
+#         return xxp
+
+  
+#     def find_nodes_by_depth(self,graph, start_node, max_depth):
+#         """
+#         从起始节点出发，沿有向边查找指定深度内的所有节点，并按层级组织。
+
+#         Args:
+#             graph (nx.DiGraph): 有向图。
+#             start_node: 起始节点。
+#             max_depth (int): 最大查找深度（0表示起始节点本身，1表示直接后继，依此类推）。
+
+#         Returns:
+#             dict: 一个字典，键是深度（int），值是该深度下可达的节点列表。
+#                   例如：{0: [start_node], 1: [node1, node2], 2: [node3, node4]}
+#                   如果起始节点不存在，返回空字典。
+#         """
+#         if start_node not in graph:
+#             print(f"错误: 起始节点 '{start_node}' 不存在于图中。")
+#             return {}
+
+#         # 使用 BFS 算法
+#         visited = {start_node}  # 记录已访问节点，避免循环和重复
+#         queue = [(start_node, 0)]  # 队列，存储 (node, current_depth)
+
+#         # 结果字典，按深度存储节点
+#         result_by_depth = {0: [start_node]} 
+
+#         head = 0  # 队列的头指针，代替 pop(0) 以提高效率
+#         while head < len(queue):
+#             current_node, current_depth = queue[head]
+#             head += 1
+
+#             # 如果当前深度已达到最大深度，则不再探索其后继
+#             if current_depth >= max_depth:
+#                 continue
+
+#             # 探索当前节点的直接后继
+#             for neighbor in graph.successors(current_node):
+#                 if neighbor not in visited:
+#                     visited.add(neighbor)
+#                     next_depth = current_depth + 1
+
+#                     # 将后继节点添加到结果字典的对应深度层
+#                     if next_depth not in result_by_depth:
+#                         result_by_depth[next_depth] = []
+#                     result_by_depth[next_depth].append(neighbor)
+
+#                     # 将后继节点加入队列，以便后续探索
+#                     queue.append((neighbor, next_depth))
+
+#         return result_by_depth
+
+    
+#     def get_events(self,events)->list[Events]:
+#         x = []
+#         for i in events:
+#             if i.get(0):
+#                 for j in i.get(0):
+#                     x.append(self.get_entity_by_name(j))
+#             if i.get(1):
+#                 for j2 in i.get(1):
+#                     x.append(self.get_entity_by_name(j2))
+
+#         return x
+    
+#     def get_entity_by_id(self,id:str)->Events:
+#         return self.id2events.get(id)
+    
+#     def get_entity_by_name(self,name:str)->Events:
+#         return self.name2events.get(name)
