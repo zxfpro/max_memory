@@ -35,7 +35,6 @@ import os
 from llama_index.core.postprocessor import SimilarityPostprocessor
 
 
-
 def merge_graphs_with_advanced_aliases(
     graph1: nx.Graph,
     graph2: nx.Graph,
@@ -455,23 +454,6 @@ class Graphs():
         return find_related_edges_greedy_flexible_networkx(self.G, nodes_to_check)
 
 
-# def get_prompt(self,events:list[dict]):
-#     events_prompt = '## 过往事件\n'
-#     for i in events:
-#         if i.get(0):
-#             for i1 in i.get(0):
-#                 events_prompt += '----'
-#                 events_prompt += i1
-#                 events_prompt += '\n'
-
-#         if i.get(1):
-#             for i2 in i.get(1):
-#                 events_prompt += '----'
-#                 events_prompt += '----'
-#                 events_prompt += i2
-#                 events_prompt += '\n'
-
-#     return events_prompt
 
 class DiGraphs(Graphs):
     def __init__(self, path="save_digraph.pickle"):
@@ -517,6 +499,122 @@ class DiGraphs(Graphs):
         nt.from_nx(self.G)
         nt.write_html(path, open_browser=False, notebook=False)
 
+    def search_graph(self, result_names: list[str], depth: int = 2, output_type: str = "prompt") -> set:
+        """
+        根据节点名称列表，在图中搜索相关实体。
+        
+        Args:
+            result_names (list[str]): 待搜索的节点名称列表。
+            depth (int): 搜索深度。
+            output_type (str): 输出类型，'prompt' 或 'entity'。
+        
+        Returns:
+            set: 根据 output_type 返回相应的结果集合。
+        """
+        all_found_entity_names = set()
+        
+        for name in result_names:
+            node_id = self.name2id.get(name) # 获取名称对应的ID
+            if node_id: # 只有当名称对应的ID存在时才进行搜索
+                # all_entity 包含的是节点ID
+                all_entity = self.find_nodes_by_depth(self.G, node_id, depth)
+                # 将找到的实体ID转换为名称并添加到集合中
+            else:
+                print(f"Warning: Node with name '{name}' not found in name2id mapping.")
+        print(all_entity,'all_entity')
+        if output_type == 'prompt':
+            # get_prompt 期望的是实体名称列表
+            result = self.get_prompt(all_entity)
+        elif output_type == 'entity':
+            # get_entitys 期望的是实体名称集合
+            result = self.get_entitys(all_entity)
+        else:
+            raise TypeError('Invalid output_type. Must be "prompt" or "entity".')
+        return result
+
+    def get_entitys(self,events):
+        x = {}
+        for level, content_list in events.items():
+            x[level] = [self.get_entity_by_id(i) for i in content_list]
+        return x
+    
+    def get_prompt(self,events:list[dict]):
+        events_prompt = '## 过往事件\n'
+        for level, content_list in events.items():
+            if level == 0:
+                for i in content_list:
+                    print(self.get_entity_by_id(i).get('name'))
+                    events_prompt += ""
+                    events_prompt += self.get_entity_by_id(i).get('name')
+                    events_prompt += " : "
+                    events_prompt += ";".join(self.get_entity_by_id(i).get('describe'))
+                    events_prompt += '\n'
+            elif level == 1:
+                for i in content_list:
+                    events_prompt += "----"
+                    events_prompt += self.get_entity_by_id(i).get('name')
+                    events_prompt += " : "
+                    events_prompt += ";".join(self.get_entity_by_id(i).get('describe'))
+                    events_prompt += '\n'
+            elif level == 2:
+                for i in content_list:
+                    events_prompt += "--------"
+                    events_prompt += self.get_entity_by_id(i).get('name')
+                    events_prompt += " : "
+                    events_prompt += ";".join(self.get_entity_by_id(i).get('describe'))
+                    events_prompt += '\n'
+
+        return events_prompt
+
+    def find_nodes_by_depth(self,graph, start_node, max_depth):
+        """
+        从起始节点出发，沿有向边查找指定深度内的所有节点，并按层级组织。
+
+        Args:
+            graph (nx.DiGraph): 有向图。
+            start_node: 起始节点。
+            max_depth (int): 最大查找深度（0表示起始节点本身，1表示直接后继，依此类推）。
+
+        Returns:
+            dict: 一个字典，键是深度（int），值是该深度下可达的节点列表。
+                  例如：{0: [start_node], 1: [node1, node2], 2: [node3, node4]}
+                  如果起始节点不存在，返回空字典。
+        """
+        if start_node not in graph:
+            print(f"错误: 起始节点 '{start_node}' 不存在于图中。")
+            return {}
+
+        # 使用 BFS 算法
+        visited = {start_node}  # 记录已访问节点，避免循环和重复
+        queue = [(start_node, 0)]  # 队列，存储 (node, current_depth)
+
+        # 结果字典，按深度存储节点
+        result_by_depth = {0: [start_node]} 
+
+        head = 0  # 队列的头指针，代替 pop(0) 以提高效率
+        while head < len(queue):
+            current_node, current_depth = queue[head]
+            head += 1
+
+            # 如果当前深度已达到最大深度，则不再探索其后继
+            if current_depth >= max_depth:
+                continue
+
+            # 探索当前节点的直接后继
+            for neighbor in graph.successors(current_node):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    next_depth = current_depth + 1
+
+                    # 将后继节点添加到结果字典的对应深度层
+                    if next_depth not in result_by_depth:
+                        result_by_depth[next_depth] = []
+                    result_by_depth[next_depth].append(neighbor)
+
+                    # 将后继节点加入队列，以便后续探索
+                    queue.append((neighbor, next_depth))
+
+        return result_by_depth
 
 
 class Entity_Graph():
@@ -647,7 +745,7 @@ class Event_Graph():
         result_names = [node.text for node in result_nodes]
         result = self.G.search_graph(result_names, depth=depth, output_type=output_type)
         return result
-    #TODO1
+
     def _process(self, data_dict: dict):
         if data_dict:
             events = data_dict.get('events', [])
@@ -679,92 +777,73 @@ class Event_Graph():
 
 
 
-# class Event_Graph():
-#     def __init__(self,data_dict:dict):
-#         self.G = nx.DiGraph() # DG
-#         self.postprocess = SimilarityPostprocessor(similarity_cutoff=0.9)
-#         events, events_relations, id2events, name2events = self.process(data_dict)
-#         self.events = events
-#         self.events_relations = events_relations
-#         self.id2events = id2events
-#         self.name2events = name2events
 
+
+class Memory():
+    def __init__(self,data_dict):
+        self.entity_graph = Entity_Graph(data_dict)
+        self.event_graph = Event_Graph(data_dict)
+        
+    def update(self,index):
+        self.entity_graph.update_index(index)
+        self.event_graph.update_index(index)
+        
+    def build_retriver(self,index, similarity_top_k = 1):
+        self.entity_graph.build_retriver(index,similarity_top_k=similarity_top_k)
+        self.event_graph.build_retriver(index,similarity_top_k=similarity_top_k)
+        self.entity_graph.add_graph()
+        self.event_graph.add_graph()
+    
+    def retrive(self, entities:list[str] = [], events:list[str] = []):
+        all_events = []
+        all_entities = set()
+        
+        for event in events:
+            result_events = self.event_graph.retrive(event)
+            result_events = self.event_graph.get_events(result_events)
+            print(event,'event')
+            print(result_events,'result_events')
+            if result_events:
+                all_events += result_events
+                for event_i in result_events:
+                    print(event_i,'event_i')
+                    # print([self.entity_graph.get_entity_by_id(k) for k in event_i.involved_entities],'event_i.involved_entities')
+                    all_entities |= set(event_i.involved_entities)
+                    
+        for entity in entities:
+            all_entities |= self.entity_graph.retrive(entity)
+            
+        print(all_events,"all_events")
+        
+ 
+        return self.get_system_prompt(self.event_graph.get_prompt(all_events), self.entity_graph.get_prompt(all_entities))
+
+    def get_system_prompt(self,event_prompt,entities_prompt):
+        system_prompt = f'''
+你是一个聊天机器人, 相比你的大模型记忆来说, 下面的事件和概念陈述更加重要.
+
+{event_prompt}
+{entities_prompt}
+'''
+        return system_prompt
     
     
-#     def retrive(self,text,depth = 2):
-#         result = self.retriver_search(text)
-#         xxp = []
-#         for i in result:
-#             result = self.find_nodes_by_depth(self.G, i.text, max_depth = depth)
-#             xxp.append(result)
-#         return xxp
-
-  
-#     def find_nodes_by_depth(self,graph, start_node, max_depth):
-#         """
-#         从起始节点出发，沿有向边查找指定深度内的所有节点，并按层级组织。
-
-#         Args:
-#             graph (nx.DiGraph): 有向图。
-#             start_node: 起始节点。
-#             max_depth (int): 最大查找深度（0表示起始节点本身，1表示直接后继，依此类推）。
-
-#         Returns:
-#             dict: 一个字典，键是深度（int），值是该深度下可达的节点列表。
-#                   例如：{0: [start_node], 1: [node1, node2], 2: [node3, node4]}
-#                   如果起始节点不存在，返回空字典。
-#         """
-#         if start_node not in graph:
-#             print(f"错误: 起始节点 '{start_node}' 不存在于图中。")
-#             return {}
-
-#         # 使用 BFS 算法
-#         visited = {start_node}  # 记录已访问节点，避免循环和重复
-#         queue = [(start_node, 0)]  # 队列，存储 (node, current_depth)
-
-#         # 结果字典，按深度存储节点
-#         result_by_depth = {0: [start_node]} 
-
-#         head = 0  # 队列的头指针，代替 pop(0) 以提高效率
-#         while head < len(queue):
-#             current_node, current_depth = queue[head]
-#             head += 1
-
-#             # 如果当前深度已达到最大深度，则不再探索其后继
-#             if current_depth >= max_depth:
-#                 continue
-
-#             # 探索当前节点的直接后继
-#             for neighbor in graph.successors(current_node):
-#                 if neighbor not in visited:
-#                     visited.add(neighbor)
-#                     next_depth = current_depth + 1
-
-#                     # 将后继节点添加到结果字典的对应深度层
-#                     if next_depth not in result_by_depth:
-#                         result_by_depth[next_depth] = []
-#                     result_by_depth[next_depth].append(neighbor)
-
-#                     # 将后继节点加入队列，以便后续探索
-#                     queue.append((neighbor, next_depth))
-
-#         return result_by_depth
-
-    
-#     def get_events(self,events)->list[Events]:
-#         x = []
-#         for i in events:
-#             if i.get(0):
-#                 for j in i.get(0):
-#                     x.append(self.get_entity_by_name(j))
-#             if i.get(1):
-#                 for j2 in i.get(1):
-#                     x.append(self.get_entity_by_name(j2))
-
-#         return x
-    
-#     def get_entity_by_id(self,id:str)->Events:
-#         return self.id2events.get(id)
-    
-#     def get_entity_by_name(self,name:str)->Events:
-#         return self.name2events.get(name)
+    def talk(self,prompt):
+        pass
+        # 将prompt 分解成events 和 entity
+        
+        # events 和 entity 通过retriver 得到 system_prompt
+        
+        # 将system_prompt + history 得到最终的prompt
+        
+        # 聊天 得到新的prompt
+        
+    def update(self, a):
+        pass
+        # session 为一个生命周期
+        
+        ## 每次的retriver 结构都要保留
+        
+        ## LLM 结合新的聊天历史, 修正, 增加, 节点
+        
+        ## 将局部节点, 融入整体
