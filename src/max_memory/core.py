@@ -503,7 +503,7 @@ class Entity_Graph():
 
         uuid_char_pattern = re.compile(r"^[0-9a-f-]+$")
 
-        if uuid_char_pattern.full_match(text_lower):
+        if uuid_char_pattern.fullmatch(text_lower):
             if len(text) > 1 and any(c.isalnum() for c in text):
                 return 'UUID_ENTITY'
         
