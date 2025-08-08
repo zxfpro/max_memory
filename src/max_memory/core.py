@@ -623,3 +623,86 @@ class Entity_Graph():
                 return 'UUID_ENTITY'
         
         return 'GENERIC_STRING'
+
+
+class Event_Graph():
+    def __init__(self):
+        self._build = False
+
+    def update(self, index, graph, data_dict):
+        events_relations, id2events, name2events = self._process(data_dict)
+        graph.update(events_relations, id2events, name2events)
+        for i in list(graph.G.nodes):
+            node_data = graph.G.nodes[i]
+            doc = Document(text=node_data.get("name"),
+                           metadata={'type': "event", "id": i},
+                           excluded_embed_metadata_keys=['type', 'id'],
+                           id_=i)
+            index.update(document=doc)
+
+    def build(self, index, G, similarity_top_k: int = 2, similarity_cutoff=0.8):
+        self.postprocess = SimilarityPostprocessor(similarity_cutoff=similarity_cutoff)
+        self.retriver = index.as_retriever(similarity_top_k=similarity_top_k,
+                                            filters=MetadataFilters(
+                                                filters=[MetadataFilter(key="type", operator=FilterOperator.EQ, value="event"), ]
+                                            ))
+        self.G = G
+        self._build = True
+
+    def search(self, text, depth=2, output_type="prompt"):
+        assert self._build == True
+        result_nodes = self.postprocess.postprocess_nodes(self.retriver.retrieve(text))
+        result_names = [node.text for node in result_nodes]
+        result = self.G.search_graph(result_names, depth=depth, output_type=output_type)
+        return result
+
+    def _process(self, data_dict: dict):
+        if data_dict:
+            events = data_dict.get('events', [])
+            events_relations_raw = data_dict.get('events_relations', [])
+
+            id2events = {event.get('id'): event for event in events if event.get('id')}
+            name2events = {event.get('name'): event.get('id') for event in events if event.get('name') is not None}
+
+            # 处理 events_relations，将其转换为统一的 subject_id, object_id 格式
+            processed_relations = []
+            for entry in events_relations_raw:
+                subject_id = entry.get('subject_id')
+                sub_events_ids = entry.get('sub_events_id', []) # 假设 sub_events_id 是一个列表
+
+                for sub_event_id in sub_events_ids:
+                    # 确保 subject_id 和 sub_event_id (作为 object_id) 都存在于 id2events 中
+                    if subject_id in id2events and sub_event_id in id2events:
+                        processed_relations.append({
+                            'subject_id': subject_id,
+                            "proportion": 0.8,
+                            'object_id': sub_event_id
+                        })
+                    else:
+                        print(f"Warning: Event relation involving unknown subject_id '{subject_id}' or object_id '{sub_event_id}'. Skipping relation.")
+
+            return processed_relations, id2events, name2events
+        else:
+            return [], {}, {}
+
+    def _identify_string_type(self, text: str) -> str:
+        # 这个方法在 Event_Graph 的 _process 中没有直接用到，但为了保持与 Entity_Graph 结构一致性保留
+        if not isinstance(text, str):
+            return 'GENERIC_STRING'
+        
+        text_lower = text.lower()
+
+        try:
+            uuid_obj = uuid.UUID(text_lower)
+            if str(uuid_obj) == text_lower or str(uuid_obj).replace('-', '') == text_lower.replace('-', ''):
+                return 'UUID_ENTITY'
+        except ValueError:
+            pass
+
+        uuid_char_pattern = re.compile(r"^[0-9a-f-]+$")
+
+        if uuid_char_pattern.fullmatch(text_lower):
+            if len(text) > 1 and any(c.isalnum() for c in text):
+                return 'UUID_ENTITY'
+        
+        return 'GENERIC_STRING'
