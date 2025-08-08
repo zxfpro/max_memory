@@ -15,6 +15,202 @@ import json
 import pickle
 import os
 
+from pyvis.network import Network
+import networkx as nx
+import re
+import uuid
+import json
+from llama_index.core import VectorStoreIndex
+from llama_index.core import Document
+from llama_index.core.vector_stores import (
+    MetadataFilter,
+    MetadataFilters,
+    FilterOperator,
+)
+from llama_index.core.vector_stores import FilterOperator, FilterCondition
+import json
+import pickle
+import os
+
+from llama_index.core.postprocessor import SimilarityPostprocessor
+
+
+
+def merge_graphs_with_advanced_aliases(
+    graph1: nx.Graph,
+    graph2: nx.Graph,
+    node_mapping: dict = None  # 新增参数：{original_name_in_graph: target_name_in_merged_graph}
+) -> nx.Graph:
+    """
+    合并两个 NetworkX 图，支持预定义的节点别名映射，并处理同名节点为别名关系。
+
+    原则：
+    1. 节点重命名/别名映射：
+       - `node_mapping` 参数允许在合并前将特定节点名称映射到统一的名称。
+       - 例如：{"join": "David"} 会将 graph1 中的 "join" 视为 "David"。
+       - 如果映射的目标名称在 graph1 中已存在，则该节点成为 graph1 对应节点的别名。
+    2. 同名节点处理：
+       - 如果 graph2 中的节点（或经过映射后的节点）在 graph1 中已存在，则 graph2 的该节点
+         被视为 graph1 中同名节点的别名。新图中，该节点保留 graph1 的属性，并增加一个
+         'aliases' 属性来记录 graph2 中同名节点的原始ID，同时保留 'all_aliases_details' 
+         来存储完整的原始信息。
+       - 'aliases' 属性格式：如果只有一个别名，为字符串；如果有多个别名，为字符串列表。
+       - 'all_aliases_details' 属性格式：列表，每个元素是一个字典，包含：
+         {'original_id': '原始节点ID', 'source_graph': '来源图', 'original_data': '原始节点属性'}
+    3. 线的关系继承：
+       - 所有来自 graph1 和 graph2 的边都会被添加到新图中。在添加边之前，其端点会根据
+         node_mapping 进行调整。
+
+    Args:
+        graph1 (nx.Graph): 第一个图（优先级较高，其节点和属性为主）。
+        graph2 (nx.Graph): 第二个图（其节点可能成为 graph1 的别名）。
+        node_mapping (dict, optional): 一个字典，定义了节点名称的映射关系。
+                                       键是原始节点名称，值是目标节点名称。
+                                       例如：{"join": "David", "Robert": "Bob"}。
+                                       默认为 None，表示不进行额外映射。
+
+    Returns:
+        nx.Graph: 合并后的新图。
+    """
+    merged_graph = nx.Graph()
+    node_mapping = node_mapping if node_mapping is not None else {}
+
+    # --- 辅助函数：根据映射获取节点的新名称 ---
+    def get_mapped_node_name(node_name):
+        return node_mapping.get(node_name, node_name)
+
+    # --- 辅助函数：添加别名到节点 ---
+    def _add_alias_to_node(target_node_id, alias_id, source_graph_name, original_data):
+        node_data = merged_graph.nodes[target_node_id]
+
+        # 维护简洁的 'aliases' 属性 (字符串或字符串列表)
+        if 'aliases' not in node_data:
+            node_data['aliases'] = [] # 先初始化为列表
+        
+        # 避免重复添加别名ID到简洁列表
+        if alias_id not in node_data['aliases']:
+            node_data['aliases'].append(alias_id)
+
+        # 维护详细的 'all_aliases_details' 属性
+        if 'all_aliases_details' not in node_data:
+            node_data['all_aliases_details'] = []
+        
+        node_data['all_aliases_details'].append(
+            {'original_id': alias_id, 'source_graph': source_graph_name, 'original_data': original_data}
+        )
+
+    # 1. 处理 graph1 的所有节点和属性
+    for original_node_g1, data_g1 in graph1.nodes(data=True):
+        mapped_node_g1 = get_mapped_node_name(original_node_g1)
+        
+        if not merged_graph.has_node(mapped_node_g1):
+            # 如果映射后的节点在 merged_graph 中不存在，直接添加为主节点
+            merged_graph.add_node(mapped_node_g1, **data_g1)
+            # 如果 original_node_g1 不同于 mapped_node_g1 (即发生了映射)
+            # 那么 original_node_g1 是 mapped_node_g1 的一个别名
+            if original_node_g1 != mapped_node_g1:
+                _add_alias_to_node(mapped_node_g1, original_node_g1, 'graph1', data_g1)
+        else:
+            # 如果映射后的节点在 merged_graph 中已存在 (这意味着 G1 内部映射导致重合)
+            # 此时 original_node_g1 应该作为 mapped_node_g1 的别名。
+            if original_node_g1 != mapped_node_g1: 
+                _add_alias_to_node(mapped_node_g1, original_node_g1, 'graph1', data_g1)
+
+    # 2. 处理 graph2 的节点：别名机制和映射
+    for original_node_g2, data_g2 in graph2.nodes(data=True):
+        mapped_node_g2 = get_mapped_node_name(original_node_g2)
+
+        if merged_graph.has_node(mapped_node_g2):
+            # mapped_node_g2 在 merged_graph 中已存在 (可能是来自G1的节点，或者G2内部映射)
+            # 此时 original_node_g2 应该作为 mapped_node_g2 的一个别名
+            _add_alias_to_node(mapped_node_g2, original_node_g2, 'graph2', data_g2)
+            
+            # 属性合并策略：如果graph2的属性在主节点中不存在，则合并
+            for key, value in data_g2.items():
+                if key not in merged_graph.nodes[mapped_node_g2]:
+                    merged_graph.nodes[mapped_node_g2][key] = value
+        else:
+            # mapped_node_g2 在 merged_graph 中不存在
+            # 这意味着 mapped_node_g2 是一个全新的主节点，由 original_node_g2 映射而来
+            merged_graph.add_node(mapped_node_g2, **data_g2)
+            # 如果 original_node_g2 != mapped_node_g2，则 original_node_g2 也是一个别名
+            if original_node_g2 != mapped_node_g2: 
+                _add_alias_to_node(mapped_node_g2, original_node_g2, 'graph2', data_g2)
+
+
+    # 3. 继承边的关系
+    # 对 graph1 的边进行处理
+    for u, v, data in graph1.edges(data=True):
+        mapped_u = get_mapped_node_name(u)
+        mapped_v = get_mapped_node_name(v)
+        # 确保边连接的端点在合并图中都存在 (映射后可能有所不同)
+        if merged_graph.has_node(mapped_u) and merged_graph.has_node(mapped_v):
+            merged_graph.add_edge(mapped_u, mapped_v, **data)
+        else:
+            print(f"Warning: Edge ({u}, {v}) from graph1 skipped. Mapped nodes ({mapped_u}, {mapped_v}) not found in merged graph.")
+
+    # 对 graph2 的边进行处理
+    for u, v, data in graph2.edges(data=True):
+        mapped_u = get_mapped_node_name(u)
+        mapped_v = get_mapped_node_name(v)
+        if merged_graph.has_node(mapped_u) and merged_graph.has_node(mapped_v):
+            merged_graph.add_edge(mapped_u, mapped_v, **data)
+        else:
+            print(f"Warning: Edge ({u}, {v}) from graph2 skipped. Mapped nodes ({mapped_u}, {mapped_v}) not found in merged graph.")
+            
+    # 最后处理 'aliases' 属性，如果只有一个元素，将其转换为字符串
+    for node, data in merged_graph.nodes(data=True):
+        if 'aliases' in data and isinstance(data['aliases'], list):
+            if len(data['aliases']) == 1:
+                data['aliases'] = data['aliases'][0] # 如果只有一个别名，简化为字符串
+            elif len(data['aliases']) == 0:
+                del data['aliases'] # 如果没有别名，删除属性
+
+    return merged_graph
+
+def find_related_edges_greedy_flexible_networkx(graph: nx.Graph | nx.DiGraph, nodes_to_check: list) -> list[tuple]:
+    """
+    在一个 NetworkX 图中，以“贪婪”方式查找与给定任意数量节点相关的**所有**边。
+    
+    “贪婪”意味着只要一条边的任一端点在 `nodes_to_check` 集合中，
+    这条边就会被包含在结果中。
+
+    Args:
+        graph: 一个 NetworkX Graph (无向图) 或 DiGraph (有向图) 对象。
+        nodes_to_check: 一个包含所有目标节点的列表、元组或集合。
+
+    Returns:
+        一个包含所有符合条件的边的列表。每条边表示为一个元组 (u, v)。
+        对于无向图，返回的边会进行标准化（例如，总是 (min_node, max_node)）
+        以确保结果的唯一性和一致性。
+    """
+    # 将目标节点列表转换为一个集合，以便进行 O(1) 的快速查找
+    # 这一步非常重要，无论输入是列表、元组还是集合，都能正确处理
+    target_nodes_set = set(nodes_to_check)
+    
+    # 使用集合来存储找到的边，自动处理重复和顺序问题
+    found_edges = set()
+
+    # 遍历图中的所有边
+    for u, v in graph.edges():
+        # 检查边的任一端点是否在目标节点集合中
+        if u in target_nodes_set or v in target_nodes_set:
+            if graph.is_directed():
+                # 对于有向图，直接添加边 (u, v)
+                found_edges.add((u, v))
+            else:
+                # 对于无向图，为了保证结果的唯一性，
+                # 将边标准化为 (较小节点, 较大节点) 的形式
+                standard_edge = tuple(sorted((u, v)))
+                found_edges.add(standard_edge)
+                
+    # 将集合转换回列表并返回
+    return list(found_edges)
+
+
+
+
+
 class Graphs():
     def __init__(self,path = "save.pickle"):
         self.G = nx.Graph()
@@ -237,9 +433,6 @@ class Graphs():
     def get_entity_by_id(self,id:str):
         return self.id2entities.get(id)
 
-    # 移除或修改 get_entity_by_name，因为它在 Graphs 类中不再直接管理 Entity 对象，
-    # 而是通过 id2entities 和 name2id 映射来处理原始数据字典。
-    # 这里我们模拟一个根据name获取原始实体数据字典的方法。
     def get_entity_by_name(self,name:str):
         entity_id = self.name2id.get(name)
         if entity_id:
@@ -306,197 +499,32 @@ class DiGraphs(Graphs):
         nt.from_nx(self.G)
         nt.write_html(path, open_browser=False, notebook=False)
 
+#def event_process(self, data_dict:dict):
+#         events = data_dict.get('events')
 
-def merge_graphs_with_advanced_aliases(
-    graph1: nx.Graph,
-    graph2: nx.Graph,
-    node_mapping: dict = None  # 新增参数：{original_name_in_graph: target_name_in_merged_graph}
-) -> nx.Graph:
-    """
-    合并两个 NetworkX 图，支持预定义的节点别名映射，并处理同名节点为别名关系。
-
-    原则：
-    1. 节点重命名/别名映射：
-       - `node_mapping` 参数允许在合并前将特定节点名称映射到统一的名称。
-       - 例如：{"join": "David"} 会将 graph1 中的 "join" 视为 "David"。
-       - 如果映射的目标名称在 graph1 中已存在，则该节点成为 graph1 对应节点的别名。
-    2. 同名节点处理：
-       - 如果 graph2 中的节点（或经过映射后的节点）在 graph1 中已存在，则 graph2 的该节点
-         被视为 graph1 中同名节点的别名。新图中，该节点保留 graph1 的属性，并增加一个
-         'aliases' 属性来记录 graph2 中同名节点的原始ID，同时保留 'all_aliases_details' 
-         来存储完整的原始信息。
-       - 'aliases' 属性格式：如果只有一个别名，为字符串；如果有多个别名，为字符串列表。
-       - 'all_aliases_details' 属性格式：列表，每个元素是一个字典，包含：
-         {'original_id': '原始节点ID', 'source_graph': '来源图', 'original_data': '原始节点属性'}
-    3. 线的关系继承：
-       - 所有来自 graph1 和 graph2 的边都会被添加到新图中。在添加边之前，其端点会根据
-         node_mapping 进行调整。
-
-    Args:
-        graph1 (nx.Graph): 第一个图（优先级较高，其节点和属性为主）。
-        graph2 (nx.Graph): 第二个图（其节点可能成为 graph1 的别名）。
-        node_mapping (dict, optional): 一个字典，定义了节点名称的映射关系。
-                                       键是原始节点名称，值是目标节点名称。
-                                       例如：{"join": "David", "Robert": "Bob"}。
-                                       默认为 None，表示不进行额外映射。
-
-    Returns:
-        nx.Graph: 合并后的新图。
-    """
-    merged_graph = nx.Graph()
-    node_mapping = node_mapping if node_mapping is not None else {}
-
-    # --- 辅助函数：根据映射获取节点的新名称 ---
-    def get_mapped_node_name(node_name):
-        return node_mapping.get(node_name, node_name)
-
-    # --- 辅助函数：添加别名到节点 ---
-    def _add_alias_to_node(target_node_id, alias_id, source_graph_name, original_data):
-        node_data = merged_graph.nodes[target_node_id]
-
-        # 维护简洁的 'aliases' 属性 (字符串或字符串列表)
-        if 'aliases' not in node_data:
-            node_data['aliases'] = [] # 先初始化为列表
-        
-        # 避免重复添加别名ID到简洁列表
-        if alias_id not in node_data['aliases']:
-            node_data['aliases'].append(alias_id)
-
-        # 维护详细的 'all_aliases_details' 属性
-        if 'all_aliases_details' not in node_data:
-            node_data['all_aliases_details'] = []
-        
-        node_data['all_aliases_details'].append(
-            {'original_id': alias_id, 'source_graph': source_graph_name, 'original_data': original_data}
-        )
-
-    # 1. 处理 graph1 的所有节点和属性
-    for original_node_g1, data_g1 in graph1.nodes(data=True):
-        mapped_node_g1 = get_mapped_node_name(original_node_g1)
-        
-        if not merged_graph.has_node(mapped_node_g1):
-            # 如果映射后的节点在 merged_graph 中不存在，直接添加为主节点
-            merged_graph.add_node(mapped_node_g1, **data_g1)
-            # 如果 original_node_g1 不同于 mapped_node_g1 (即发生了映射)
-            # 那么 original_node_g1 是 mapped_node_g1 的一个别名
-            if original_node_g1 != mapped_node_g1:
-                _add_alias_to_node(mapped_node_g1, original_node_g1, 'graph1', data_g1)
-        else:
-            # 如果映射后的节点在 merged_graph 中已存在 (这意味着 G1 内部映射导致重合)
-            # 此时 original_node_g1 应该作为 mapped_node_g1 的别名。
-            if original_node_g1 != mapped_node_g1: 
-                _add_alias_to_node(mapped_node_g1, original_node_g1, 'graph1', data_g1)
-
-    # 2. 处理 graph2 的节点：别名机制和映射
-    for original_node_g2, data_g2 in graph2.nodes(data=True):
-        mapped_node_g2 = get_mapped_node_name(original_node_g2)
-
-        if merged_graph.has_node(mapped_node_g2):
-            # mapped_node_g2 在 merged_graph 中已存在 (可能是来自G1的节点，或者G2内部映射)
-            # 此时 original_node_g2 应该作为 mapped_node_g2 的一个别名
-            _add_alias_to_node(mapped_node_g2, original_node_g2, 'graph2', data_g2)
-            
-            # 属性合并策略：如果graph2的属性在主节点中不存在，则合并
-            for key, value in data_g2.items():
-                if key not in merged_graph.nodes[mapped_node_g2]:
-                    merged_graph.nodes[mapped_node_g2][key] = value
-        else:
-            # mapped_node_g2 在 merged_graph 中不存在
-            # 这意味着 mapped_node_g2 是一个全新的主节点，由 original_node_g2 映射而来
-            merged_graph.add_node(mapped_node_g2, **data_g2)
-            # 如果 original_node_g2 != mapped_node_g2，则 original_node_g2 也是一个别名
-            if original_node_g2 != mapped_node_g2: 
-                _add_alias_to_node(mapped_node_g2, original_node_g2, 'graph2', data_g2)
+#         id2events = {i.get('id'): Events(i) for i in events}
+#         name2events = {v.name: v for v in id2events.values()}
 
 
-    # 3. 继承边的关系
-    # 对 graph1 的边进行处理
-    for u, v, data in graph1.edges(data=True):
-        mapped_u = get_mapped_node_name(u)
-        mapped_v = get_mapped_node_name(v)
-        # 确保边连接的端点在合并图中都存在 (映射后可能有所不同)
-        if merged_graph.has_node(mapped_u) and merged_graph.has_node(mapped_v):
-            merged_graph.add_edge(mapped_u, mapped_v, **data)
-        else:
-            print(f"Warning: Edge ({u}, {v}) from graph1 skipped. Mapped nodes ({mapped_u}, {mapped_v}) not found in merged graph.")
+#         events_relations = self.deal_(data_dict.get("events_relations"))
 
-    # 对 graph2 的边进行处理
-    for u, v, data in graph2.edges(data=True):
-        mapped_u = get_mapped_node_name(u)
-        mapped_v = get_mapped_node_name(v)
-        if merged_graph.has_node(mapped_u) and merged_graph.has_node(mapped_v):
-            merged_graph.add_edge(mapped_u, mapped_v, **data)
-        else:
-            print(f"Warning: Edge ({u}, {v}) from graph2 skipped. Mapped nodes ({mapped_u}, {mapped_v}) not found in merged graph.")
-            
-    # 最后处理 'aliases' 属性，如果只有一个元素，将其转换为字符串
-    for node, data in merged_graph.nodes(data=True):
-        if 'aliases' in data and isinstance(data['aliases'], list):
-            if len(data['aliases']) == 1:
-                data['aliases'] = data['aliases'][0] # 如果只有一个别名，简化为字符串
-            elif len(data['aliases']) == 0:
-                del data['aliases'] # 如果没有别名，删除属性
+#         for i in events_relations:
+#             object_id = i.get('object_id')
+#             id2events[i.get('subject_id')].next.append(object_id)
 
-    return merged_graph
+#         return events, events_relations, id2events, name2events
 
-def find_related_edges_greedy_flexible_networkx(graph: nx.Graph | nx.DiGraph, nodes_to_check: list) -> list[tuple]:
-    """
-    在一个 NetworkX 图中，以“贪婪”方式查找与给定任意数量节点相关的**所有**边。
-    
-    “贪婪”意味着只要一条边的任一端点在 `nodes_to_check` 集合中，
-    这条边就会被包含在结果中。
+#    def deal_(self,data):
+#         result = []
+#         for entry in data:
+#             subject_id = entry['subject_id']
+#             sub_events_ids = entry['sub_events_id']
+#             for sub_event_id in sub_events_ids:
+#                 result.append({'subject_id': subject_id,
+#                                "proportion":0.8,
+#                                'object_id': sub_event_id})
 
-    Args:
-        graph: 一个 NetworkX Graph (无向图) 或 DiGraph (有向图) 对象。
-        nodes_to_check: 一个包含所有目标节点的列表、元组或集合。
-
-    Returns:
-        一个包含所有符合条件的边的列表。每条边表示为一个元组 (u, v)。
-        对于无向图，返回的边会进行标准化（例如，总是 (min_node, max_node)）
-        以确保结果的唯一性和一致性。
-    """
-    # 将目标节点列表转换为一个集合，以便进行 O(1) 的快速查找
-    # 这一步非常重要，无论输入是列表、元组还是集合，都能正确处理
-    target_nodes_set = set(nodes_to_check)
-    
-    # 使用集合来存储找到的边，自动处理重复和顺序问题
-    found_edges = set()
-
-    # 遍历图中的所有边
-    for u, v in graph.edges():
-        # 检查边的任一端点是否在目标节点集合中
-        if u in target_nodes_set or v in target_nodes_set:
-            if graph.is_directed():
-                # 对于有向图，直接添加边 (u, v)
-                found_edges.add((u, v))
-            else:
-                # 对于无向图，为了保证结果的唯一性，
-                # 将边标准化为 (较小节点, 较大节点) 的形式
-                standard_edge = tuple(sorted((u, v)))
-                found_edges.add(standard_edge)
-                
-    # 将集合转换回列表并返回
-    return list(found_edges)
-
-
-
-from pyvis.network import Network
-import networkx as nx
-import re
-import uuid
-import json
-from llama_index.core import VectorStoreIndex
-from llama_index.core import Document
-from llama_index.core.vector_stores import (
-    MetadataFilter,
-    MetadataFilters,
-    FilterOperator,
-)
-from llama_index.core.vector_stores import FilterOperator, FilterCondition
-import json
-import pickle
-import os
-
+#         return result
 
 class Entity_Graph():
     def __init__(self):
