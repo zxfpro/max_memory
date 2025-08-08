@@ -1,4 +1,3 @@
-'''
 Author: 赵雪峰
 Date: 2025-08-01 14:31:16
 LastEditors: 823042332@qq.com 823042332@qq.com
@@ -107,8 +106,8 @@ class Graphs():
         self.G.add_nodes_from(nodes_graph)
         self.G.add_edges_from(edges_graph)
         self.save_graph()
-        self.name2id = name2id
-        self.id2entities = id2entities
+        self.name2id.update(name2id) # 合并 name2id
+        self.id2entities.update(id2entities) # 合并 id2entities
 
 
     def find_nodes_by_attribute(self,graph, attribute_name, attribute_value):
@@ -219,6 +218,21 @@ class Graphs():
         if entity_id:
             return self.id2entities.get(entity_id)
         return None
+
+    def find_related_edges(self, nodes_to_check: list) -> list[tuple]:
+        """
+        在当前 Graphs 实例的 NetworkX 图中，以“贪婪”方式查找与给定任意数量节点相关的**所有**边。
+        此方法封装了顶层的 find_related_edges_greedy_flexible_networkx 函数。
+
+        Args:
+            nodes_to_check: 一个包含所有目标节点的列表、元组或集合。
+
+        Returns:
+            一个包含所有符合条件的边的列表。每条边表示为一个元组 (u, v)。
+            对于无向图，返回的边会进行标准化（例如，总是 (min_node, max_node)）
+            以确保结果的唯一性和一致性。
+        """
+        return find_related_edges_greedy_flexible_networkx(self.G, nodes_to_check)
 
 
 class Entity_Graph():
