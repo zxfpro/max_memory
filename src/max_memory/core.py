@@ -232,41 +232,21 @@ class Graphs():
         self.name2id.update(name2id) # 合并 name2id
         self.id2entities.update(id2entities) # 合并 id2entities
 
-    def merge_other_graph(self, other_graph_instance: 'Graphs', node_name_mapping: dict = None):
+    def merge_other_graph(self, other_graph_instance: 'Graphs', node_mapping: dict = None):
         """
         将另一个 Graphs 实例的图合并到当前实例中。
         同时会更新当前实例的 name2id 和 id2entities 映射。
 
         Args:
             other_graph_instance (Graphs): 另一个 Graphs 实例。
-            node_name_mapping (dict, optional): 一个字典，定义了节点名称的映射关系。
+            node_mapping (dict, optional): 节点名称的映射关系。
                                            键是 other_graph_instance 中的原始节点名称，
                                            值是合并图中目标节点名称。
                                            默认为 None，表示不进行额外映射。
         """
-        # 构建实际的 node_mapping (ID 到 ID 的映射)
-        # 遍历 other_graph_instance 中的所有节点，根据 node_name_mapping 确定其在合并图中的目标ID
-        
-        # 1. 准备 graph1 的 name-to-id 映射 (当前实例的 G)
-        graph1_name_to_id = {data.get('name'): node_id for node_id, data in self.G.nodes(data=True) if 'name' in data}
-        
-        # 2. 准备 graph2 的 name-to-id 映射 (other_graph_instance.G)
-        graph2_name_to_id = {data.get('name'): node_id for node_id, data in other_graph_instance.G.nodes(data=True) if 'name' in data}
-
-        # 3. 创建实际用于 merge_graphs_with_advanced_aliases 的 node_mapping (ID 到 ID)
-        # 键是 graph2 中的原始 ID，值是合并后的目标 ID
-        actual_node_id_mapping = {}
-        if node_name_mapping:
-            for original_name_g2, target_name_in_merged in node_name_mapping.items():
-                original_id_g2 = graph2_name_to_id.get(original_name_g2)
-                if original_id_g2: # 确保 original_name_g2 在 graph2 中存在
-                    # 尝试从 graph1 中获取目标名称的 ID，如果不存在，则使用 graph2 中原始名称的 ID
-                    target_id_in_merged = graph1_name_to_id.get(target_name_in_merged) or original_id_g2
-                    actual_node_id_mapping[original_id_g2] = target_id_in_merged
-
         # 使用 merge_graphs_with_advanced_aliases 函数合并图
         # 当前实例的 G 作为 graph1 (优先级高), other_graph_instance.G 作为 graph2
-        merged_nx_graph = merge_graphs_with_advanced_aliases(self.G, other_graph_instance.G, actual_node_id_mapping)
+        merged_nx_graph = merge_graphs_with_advanced_aliases(self.G, other_graph_instance.G, node_mapping)
         self.G = merged_nx_graph
 
         # 更新 name2id 和 id2entities
