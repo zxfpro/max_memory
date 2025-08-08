@@ -1,4 +1,3 @@
-
 import networkx as nx
 from pyvis.network import Network
 
@@ -233,6 +232,59 @@ class Graphs():
         self.name2id.update(name2id) # 合并 name2id
         self.id2entities.update(id2entities) # 合并 id2entities
 
+    def merge_other_graph(self, other_graph_instance: 'Graphs', node_mapping: dict = None):
+        """
+        将另一个 Graphs 实例的图合并到当前实例中。
+        同时会更新当前实例的 name2id 和 id2entities 映射。
+
+        Args:
+            other_graph_instance (Graphs): 另一个 Graphs 实例。
+            node_mapping (dict, optional): 节点名称的映射关系。
+                                           键是 other_graph_instance 中的原始节点名称，
+                                           值是合并图中目标节点名称。
+                                           默认为 None，表示不进行额外映射。
+        """
+        # 使用 merge_graphs_with_advanced_aliases 函数合并图
+        # 当前实例的 G 作为 graph1 (优先级高), other_graph_instance.G 作为 graph2
+        merged_nx_graph = merge_graphs_with_advanced_aliases(self.G, other_graph_instance.G, node_mapping)
+        self.G = merged_nx_graph
+
+        # 更新 name2id 和 id2entities
+        # 遍历合并后的图的节点，重新构建或更新 name2id 和 id2entities
+        new_name2id = {}
+        new_id2entities = {}
+
+        # 优先保留当前实例的映射，然后合并其他实例的
+        # 注意：如果 other_graph_instance 中的节点通过映射与 self.G 中的节点合并，
+        # 那么 merged_nx_graph 中的节点ID将是 self.G 中的ID或映射后的ID。
+        # 因此，需要根据 merged_nx_graph 的实际节点来更新映射。
+
+        for node_id, node_data in self.G.nodes(data=True):
+            # 优先使用合并后图中节点的 'name' 属性来更新 name2id
+            if 'name' in node_data:
+                new_name2id[node_data['name']] = node_id
+            new_id2entities[node_id] = node_data
+        
+        # 处理别名：如果一个节点有别名，确保所有别名也指向同一个主ID
+        # 这个逻辑已经在 merge_graphs_with_advanced_aliases 中处理了，
+        # 这里的 new_name2id 和 new_id2entities 应该直接从 merged_nx_graph 构建即可。
+        # 对于别名，其原始ID不会作为主ID出现在 merged_nx_graph 的 nodes 列表中，
+        # 而是作为主节点的 'aliases' 或 'all_aliases_details' 属性。
+        # 因此，我们只需要确保所有“主”节点及其属性被正确记录。
+        # 如果需要通过别名名称也能找到主节点，则需要额外处理：
+        for node_id, node_data in self.G.nodes(data=True):
+            if 'all_aliases_details' in node_data:
+                for alias_detail in node_data['all_aliases_details']:
+                    original_alias_id = alias_detail['original_id']
+                    original_alias_data = alias_detail['original_data']
+                    if 'name' in original_alias_data:
+                        # 确保别名名称也映射到主节点的ID
+                        new_name2id[original_alias_data['name']] = node_id
+        
+        self.name2id = new_name2id
+        self.id2entities = new_id2entities
+        self.save_graph()
+
 
     def find_nodes_by_attribute(self,graph, attribute_name, attribute_value):
         matching_nodes = []
@@ -451,7 +503,7 @@ class Entity_Graph():
 
         uuid_char_pattern = re.compile(r"^[0-9a-f-]+$")
 
-        if uuid_char_pattern.fullmatch(text_lower):
+        if uuid_char_pattern.full_match(text_lower):
             if len(text) > 1 and any(c.isalnum() for c in text):
                 return 'UUID_ENTITY'
         
