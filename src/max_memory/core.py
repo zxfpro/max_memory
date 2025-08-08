@@ -413,7 +413,7 @@ class Graphs():
             if entity_id and entity_id in self.id2entities:
                 entity_data = self.id2entities[entity_id]
                 # 假设 describe 字段在 id2entities 存储的字典中是字符串或可以安全转换为字符串
-                describe_text = ";".join(entity_data.get('describe')) if isinstance(entity_data.get('describe'), list) else (entity_data.get('describe') or "常规理解")
+                describe_text = ";".join(entity_data.get('describe')) or "常规理解"
                 entity_prompt += i + ":" + str(describe_text) + "\n    "
             else:
                 entity_prompt += i + ": 未知实体描述\n    "
@@ -499,9 +499,9 @@ class DiGraphs(Graphs):
         nt.from_nx(self.G)
         nt.write_html(path, open_browser=False, notebook=False)
 
-    def search_graph(self, result_names: list[str], depth: int = 2, output_type: str = "prompt") -> dict:
+    def search_graph(self, result_names: list[str], depth: int = 2, output_type: str = "prompt") -> set:
         """
-        根据节点名称列表，在图中搜索相关事件。
+        根据节点名称列表，在图中搜索相关实体。
         
         Args:
             result_names (list[str]): 待搜索的节点名称列表。
@@ -509,61 +509,61 @@ class DiGraphs(Graphs):
             output_type (str): 输出类型，'prompt' 或 'entity'。
         
         Returns:
-            dict: 根据 output_type 返回相应的结果集合。
+            set: 根据 output_type 返回相应的结果集合。
         """
-        all_found_events_by_depth = {}
+        all_found_entity_names = set()
         
         for name in result_names:
             node_id = self.name2id.get(name) # 获取名称对应的ID
             if node_id: # 只有当名称对应的ID存在时才进行搜索
-                events_for_node = self.find_nodes_by_depth(self.G, node_id, depth)
-                # 合并不同起始节点的结果，按深度合并ID列表
-                for d, ids in events_for_node.items():
-                    if d not in all_found_events_by_depth:
-                        all_found_events_by_depth[d] = []
-                    all_found_events_by_depth[d].extend(ids)
+                # all_entity 包含的是节点ID
+                all_entity = self.find_nodes_by_depth(self.G, node_id, depth)
+                # 将找到的实体ID转换为名称并添加到集合中
             else:
                 print(f"Warning: Node with name '{name}' not found in name2id mapping.")
-
-        # 去重每个深度层级的ID
-        for d in all_found_events_by_depth:
-            all_found_events_by_depth[d] = list(set(all_found_events_by_depth[d]))
-
+        print(all_entity,'all_entity')
         if output_type == 'prompt':
-            # get_prompt 期望的是按深度组织的ID字典
-            result = self.get_prompt(all_found_events_by_depth)
+            # get_prompt 期望的是实体名称列表
+            result = self.get_prompt(all_entity)
         elif output_type == 'entity':
-            # get_entitys 期望的是按深度组织的ID字典
-            result = self.get_entitys(all_found_events_by_depth)
+            # get_entitys 期望的是实体名称集合
+            result = self.get_entitys(all_entity)
         else:
             raise TypeError('Invalid output_type. Must be "prompt" or "entity".')
         return result
 
-    def get_entitys(self,events_by_depth:dict):
+    def get_entitys(self,events):
         x = {}
-        for level, content_list in events_by_depth.items():
+        for level, content_list in events.items():
             x[level] = [self.get_entity_by_id(i) for i in content_list]
         return x
     
-    def get_prompt(self,events_by_depth:dict):
+    def get_prompt(self,events:list[dict]):
         events_prompt = '## 过往事件\n'
-        # 确保按深度排序
-        sorted_levels = sorted(events_by_depth.keys())
-        for level in sorted_levels:
-            content_list = events_by_depth[level]
-            for i in content_list:
-                node_data = self.get_entity_by_id(i)
-                if node_data:
-                    prefix = ""
-                    if level == 0:
-                        prefix = ""
-                    elif level == 1:
-                        prefix = "----"
-                    elif level == 2:
-                        prefix = "--------"
-                    
-                    describe_text = ";".join(node_data.get('describe')) if isinstance(node_data.get('describe'), list) else (node_data.get('describe') or "常规理解")
-                    events_prompt += f"{prefix}{node_data.get('name')} : {describe_text}\n"
+        for level, content_list in events.items():
+            if level == 0:
+                for i in content_list:
+                    print(self.get_entity_by_id(i).get('name'))
+                    events_prompt += ""
+                    events_prompt += self.get_entity_by_id(i).get('name')
+                    events_prompt += " : "
+                    events_prompt += ";".join(self.get_entity_by_id(i).get('describe'))
+                    events_prompt += '\n'
+            elif level == 1:
+                for i in content_list:
+                    events_prompt += "----"
+                    events_prompt += self.get_entity_by_id(i).get('name')
+                    events_prompt += " : "
+                    events_prompt += ";".join(self.get_entity_by_id(i).get('describe'))
+                    events_prompt += '\n'
+            elif level == 2:
+                for i in content_list:
+                    events_prompt += "--------"
+                    events_prompt += self.get_entity_by_id(i).get('name')
+                    events_prompt += " : "
+                    events_prompt += ";".join(self.get_entity_by_id(i).get('describe'))
+                    events_prompt += '\n'
+
         return events_prompt
 
     def find_nodes_by_depth(self,graph, start_node, max_depth):
@@ -620,29 +620,27 @@ class DiGraphs(Graphs):
 class Entity_Graph():
     def __init__(self):
         self._build =  False
-        self.G = Graphs() # 初始化 Graphs 实例
-        self.retriver = None # 初始化 retriver
-        self.postprocess = None # 初始化 postprocess
 
-    def update(self,index,data_dict):
+    def update(self,index,graph,data_dict):
         entities_relations, id2entities, name2id = self._process(data_dict)
-        self.G.update(entities_relations, id2entities, name2id)
+        graph.update(entities_relations, id2entities, name2id)
         # 在更新后，确保 G.nodes 中有 'name' 属性，因为 Graph.update 接受的是 (id, dic)
         # 这里的 graph.G.nodes[i].get("name") 应该能正确获取
-        for i in list(self.G.G.nodes):
-            node_data = self.G.G.nodes[i] # 获取节点属性字典
+        for i in list(graph.G.nodes):
+            node_data = graph.G.nodes[i] # 获取节点属性字典
             doc = Document(text = node_data.get("name"), # 使用节点的 'name' 属性作为文本
                             metadata = {'type':"entity","id":i},
                             excluded_embed_metadata_keys = ['type','id'],
                             id_=i)
             index.update(document=doc)
 
-    def build(self,index,similarity_top_k:int = 2,similarity_cutoff = 0.8):
+    def build(self,index,G,similarity_top_k:int = 2,similarity_cutoff = 0.8):
         self.postprocess = SimilarityPostprocessor(similarity_cutoff = similarity_cutoff)
         self.retriver = index.as_retriever(similarity_top_k=similarity_top_k,
                                             filters = MetadataFilters(
                                                         filters=[MetadataFilter(key="type", operator=FilterOperator.EQ, value="entity"),]
                                             ))
+        self.G = G
         self._build = True
 
     def search(self,text,depth = 2,output_type = "prompt"):
@@ -652,18 +650,6 @@ class Entity_Graph():
         result_names = [node.text for node in result_nodes]
         result = self.G.search_graph(result_names, depth=depth, output_type=output_type)
         return result
-    
-    def get_entity_by_id(self,id:str):
-        return self.G.get_entity_by_id(id)
-
-    def get_prompt(self, entities_names: set[str]) -> str:
-        # 这里的 entities_names 是一个集合，需要转换为列表传递给 G.get_prompt
-        return self.G.get_prompt(list(entities_names))
-
-    def get_entitys(self, entities_names: set[str]) -> list:
-        # 这里的 entities_names 是一个集合，直接传递给 G.get_entitys
-        return self.G.get_entitys(entities_names)
-    
     def _process(self,data_dict:dict):
         if data_dict:
             x = []
@@ -732,27 +718,25 @@ class Entity_Graph():
 class Event_Graph():
     def __init__(self):
         self._build = False
-        self.G = DiGraphs() # 初始化 DiGraphs 实例
-        self.retriver = None # 初始化 retriver
-        self.postprocess = None # 初始化 postprocess
 
-    def update(self, index, data_dict):
+    def update(self, index, graph:DiGraphs, data_dict):
         events_relations, id2events, name2id = self._process(data_dict)
-        self.G.update(events_relations, id2events, name2id)
-        for i in list(self.G.G.nodes):
-            node_data = self.G.G.nodes[i]
+        graph.update(events_relations, id2events, name2id)
+        for i in list(graph.G.nodes):
+            node_data = graph.G.nodes[i]
             doc = Document(text=node_data.get("name"),
                            metadata={'type': "event", "id": i},
                            excluded_embed_metadata_keys=['type', 'id'],
                            id_=i)
             index.update(document=doc)
 
-    def build(self, index, similarity_top_k: int = 2, similarity_cutoff=0.8):
+    def build(self, index, G, similarity_top_k: int = 2, similarity_cutoff=0.8):
         self.postprocess = SimilarityPostprocessor(similarity_cutoff=similarity_cutoff)
         self.retriver = index.as_retriever(similarity_top_k=similarity_top_k,
                                             filters=MetadataFilters(
                                                 filters=[MetadataFilter(key="type", operator=FilterOperator.EQ, value="event"), ]
                                             ))
+        self.G = G
         self._build = True
 
     def search(self, text, depth=2, output_type="prompt"):
@@ -761,17 +745,6 @@ class Event_Graph():
         result_names = [node.text for node in result_nodes]
         result = self.G.search_graph(result_names, depth=depth, output_type=output_type)
         return result
-
-    def get_entity_by_id(self,id:str):
-        return self.G.get_entity_by_id(id)
-
-    def get_prompt(self, events_by_depth: dict):
-        # 直接传递给 G.get_prompt
-        return self.G.get_prompt(events_by_depth)
-
-    def get_events(self, events_by_depth: dict):
-        # 直接传递给 G.get_entitys (注意 DiGraphs 中 get_entitys 方法的命名和返回结构)
-        return self.G.get_entitys(events_by_depth)
 
     def _process(self, data_dict: dict):
         if data_dict:
@@ -803,83 +776,49 @@ class Event_Graph():
             return [], {}, {}
 
 
+
+
+
 class Memory():
-    def __init__(self, data_dict=None):
-        self.entity_graph = Entity_Graph()
-        self.event_graph = Event_Graph()
-        self.index = VectorStoreIndex([]) # 初始化一个空的VectorStoreIndex
-
-        if data_dict:
-            self.update(data_dict) # 如果有初始数据，就更新
+    def __init__(self,data_dict):
+        self.entity_graph = Entity_Graph(data_dict)
+        self.event_graph = Event_Graph(data_dict)
         
-    def update(self, data_dict: dict):
-        """
-        更新记忆图谱，包括实体图和事件图。
-        """
-        self.entity_graph.update(self.index, data_dict)
-        self.event_graph.update(self.index, data_dict)
+    def update(self,index):
+        self.entity_graph.update_index(index)
+        self.event_graph.update_index(index)
         
-    def build_retriever(self, similarity_top_k: int = 2, similarity_cutoff: float = 0.8):
-        """
-        构建或重建检索器。
-        """
-        self.entity_graph.build(self.index, similarity_top_k=similarity_top_k, similarity_cutoff=similarity_cutoff)
-        self.event_graph.build(self.index, similarity_top_k=similarity_top_k, similarity_cutoff=similarity_cutoff)
+    def build_retriver(self,index, similarity_top_k = 1):
+        self.entity_graph.build_retriver(index,similarity_top_k=similarity_top_k)
+        self.event_graph.build_retriver(index,similarity_top_k=similarity_top_k)
+        self.entity_graph.add_graph()
+        self.event_graph.add_graph()
     
-    def retrieve(self, entities: list[str] = None, events: list[str] = None, depth: int = 2) -> str:
-        """
-        根据实体和事件名称检索相关信息，并生成系统提示。
+    def retrive(self, entities:list[str] = [], events:list[str] = []):
+        all_events = []
+        all_entities = set()
         
-        Args:
-            entities (list[str]): 待检索的实体名称列表。
-            events (list[str]): 待检索的事件名称列表。
-            depth (int): 事件图的搜索深度。
-
-        Returns:
-            str: 包含事件和实体解释的系统提示。
-        """
-        all_events_by_depth = {} # 存储按深度组织的事件ID
-        all_entity_names = set() # 存储所有相关实体名称
-
-        if events:
-            for event_query in events:
-                # event_graph.search 返回的是按深度组织的事件ID字典
-                retrieved_events_ids_by_depth = self.event_graph.search(event_query, depth=depth, output_type='entity')
-                
-                # 合并不同查询结果的事件ID，按深度合并
-                for d, ids in retrieved_events_ids_by_depth.items():
-                    if d not in all_events_by_depth:
-                        all_events_by_depth[d] = []
-                    all_events_by_depth[d].extend(ids)
-                
-                # 从检索到的事件中提取相关实体
-                retrieved_events_data_by_depth = self.event_graph.get_events(retrieved_events_ids_by_depth)
-                for d, event_list in retrieved_events_data_by_depth.items():
-                    for event_data in event_list:
-                        if 'involved_entities' in event_data and isinstance(event_data['involved_entities'], list):
-                            for entity_id in event_data['involved_entities']:
-                                entity_data = self.entity_graph.get_entity_by_id(entity_id)
-                                if entity_data and 'name' in entity_data:
-                                    all_entity_names.add(entity_data['name'])
-
-        if entities:
-            for entity_query in entities:
-                # entity_graph.search 返回的是实体名称集合
-                retrieved_entity_names = self.entity_graph.search(entity_query, output_type='entity')
-                for entity_data in retrieved_entity_names:
-                    if 'name' in entity_data:
-                        all_entity_names.add(entity_data['name'])
+        for event in events:
+            result_events = self.event_graph.retrive(event)
+            result_events = self.event_graph.get_events(result_events)
+            print(event,'event')
+            print(result_events,'result_events')
+            if result_events:
+                all_events += result_events
+                for event_i in result_events:
+                    print(event_i,'event_i')
+                    # print([self.entity_graph.get_entity_by_id(k) for k in event_i.involved_entities],'event_i.involved_entities')
+                    all_entities |= set(event_i.involved_entities)
+                    
+        for entity in entities:
+            all_entities |= self.entity_graph.retrive(entity)
+            
+        print(all_events,"all_events")
         
-        # 去重每个深度层级的事件ID
-        for d in all_events_by_depth:
-            all_events_by_depth[d] = list(set(all_events_by_depth[d]))
+ 
+        return self.get_system_prompt(self.event_graph.get_prompt(all_events), self.entity_graph.get_prompt(all_entities))
 
-        event_prompt = self.event_graph.get_prompt(all_events_by_depth)
-        entity_prompt = self.entity_graph.get_prompt(all_entity_names)
-        
-        return self.get_system_prompt(event_prompt, entity_prompt)
-
-    def get_system_prompt(self,event_prompt: str,entities_prompt: str) -> str:
+    def get_system_prompt(self,event_prompt,entities_prompt):
         system_prompt = f'''
 你是一个聊天机器人, 相比你的大模型记忆来说, 下面的事件和概念陈述更加重要.
 
@@ -889,21 +828,22 @@ class Memory():
         return system_prompt
     
     
-    def talk(self,prompt: str):
+    def talk(self,prompt):
         pass
         # 将prompt 分解成events 和 entity
         
-        # events 和 entity 通过retrieve 得到 system_prompt
+        # events 和 entity 通过retriver 得到 system_prompt
         
         # 将system_prompt + history 得到最终的prompt
         
         # 聊天 得到新的prompt
         
-    def update_memory_from_chat(self, chat_data: dict):
-        """
-        根据聊天数据更新记忆图谱。
-        chat_data 预期格式与 _process 方法接受的 data_dict 类似。
-        """
-        self.update(chat_data)
-        # 在更新后，需要重新构建检索器以包含新数据
-        self.build_retriever()
+    def update(self, a):
+        pass
+        # session 为一个生命周期
+        
+        ## 每次的retriver 结构都要保留
+        
+        ## LLM 结合新的聊天历史, 修正, 增加, 节点
+        
+        ## 将局部节点, 融入整体
