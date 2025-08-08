@@ -1,4 +1,3 @@
-'''
 Author: 赵雪峰
 Date: 2025-08-01 14:31:16
 LastEditors: 823042332@qq.com 823042332@qq.com
@@ -44,6 +43,10 @@ class Graphs():
 
     def show_graph(self,path = "basic.html"):
         nt = Network('1000px', '1000px')
+        # 遍历图中的所有节点，将 'name' 属性设置为节点的 'label'
+        for node_id, node_data in self.G.nodes(data=True):
+            if 'name' in node_data:
+                self.G.nodes[node_id]['label'] = node_data['name']
         nt.from_nx(self.G)
         nt.write_html(path, open_browser=False,notebook=False)
 
