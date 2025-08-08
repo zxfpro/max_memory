@@ -2,7 +2,7 @@
 Author: 赵雪峰
 Date: 2025-08-01 14:31:16
 LastEditors: 823042332@qq.com 823042332@qq.com
-LastEditTime: 2025-08-07 17:08:16
+LastEditTime: 2025-08-08 09:32:37
 FilePath: /max_memory/src/max_memory/core.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koroFileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
@@ -20,12 +20,10 @@ from llama_index.core.vector_stores import (
 )
 from llama_index.core.vector_stores import FilterOperator, FilterCondition
 from llama_index.core.postprocessor import SimilarityPostprocessor
-
-
 import json
-
 import pickle
 import os
+
 class Graphs():
     def __init__(self,path = "save.pickle"):
         self.G = nx.Graph()
@@ -52,8 +50,12 @@ class Graphs():
 
     def update(self,entities_relations, id2entities, name2id):
         nodes_graph = [(id,dic) for id,dic in id2entities.items()]
-        
+        edges_graph = [(i.get('subject_id'),
+                        i.get('object_id'),
+                          {"proportion":i.get("proportion",1)}) 
+                       for i in entities_relations]
         self.G.add_nodes_from(nodes_graph)
+        self.G.add_edges_from(edges_graph)
         self.save_graph()
         self.name2id = name2id
         self.id2entities = id2entities
