@@ -163,7 +163,7 @@ def merge_graphs_with_advanced_aliases(
         if 'aliases' in data and isinstance(data['aliases'], list):
             if len(data['aliases']) == 1:
                 data['aliases'] = data['aliases'][0] # 如果只有一个别名，简化为字符串
-            elif len(data['aliases'] == 0):
+            elif len(data['aliases']) == 0:
                 del data['aliases'] # 如果没有别名，删除属性
 
     return merged_graph
@@ -355,34 +355,28 @@ class Graphs():
         Returns:
             set: 根据 output_type 返回相应的结果集合。
         """
-        all_found_entity_ids = set()
+        all_found_entity_names = set()
         
         for name in result_names:
             node_id = self.name2id.get(name) # 获取名称对应的ID
             if node_id: # 只有当名称对应的ID存在时才进行搜索
-                # all_entity_ids 包含的是节点ID
-                all_entity_ids_for_name, _ = self.search_networkx_depth_2(self.G, node_id)
-                all_entity_ids.update(all_entity_ids_for_name)
-                all_found_entity_ids.add(node_id) # 确保原始查询的节点ID也被包含进来
+                # all_entity 包含的是节点ID
+                all_entity_ids, _ = self.search_networkx_depth_2(self.G, node_id)
+                # 将找到的实体ID转换为名称并添加到集合中
+                for entity_id in all_entity_ids:
+                    # 从 id2entities 获取实体字典，再获取其name
+                    entity_data = self.id2entities.get(entity_id)
+                    if entity_data and 'name' in entity_data:
+                        all_found_entity_names.add(entity_data['name'])
+                all_found_entity_names.add(name) # 确保原始查询的名称也被包含进来
             else:
                 print(f"Warning: Node with name '{name}' not found in name2id mapping.")
 
         if output_type == 'prompt':
             # get_prompt 期望的是实体名称列表
-            # 将找到的所有实体ID转换为名称
-            all_found_entity_names = []
-            for entity_id in all_found_entity_ids:
-                entity_data = self.id2entities.get(entity_id)
-                if entity_data and 'name' in entity_data:
-                    all_found_entity_names.append(entity_data['name'])
             result = self.get_prompt(list(all_found_entity_names))
         elif output_type == 'entity':
             # get_entitys 期望的是实体名称集合
-            all_found_entity_names = set()
-            for entity_id in all_found_entity_ids:
-                entity_data = self.id2entities.get(entity_id)
-                if entity_data and 'name' in entity_data:
-                    all_found_entity_names.add(entity_data['name'])
             result = self.get_entitys(all_found_entity_names)
         else:
             raise TypeError('Invalid output_type. Must be "prompt" or "entity".')
@@ -393,10 +387,9 @@ class Graphs():
 
     def search_networkx_depth_2(self,graph, start_node):
         if start_node not in graph:
-            # 修改：返回空集合而不是抛出异常，因为外部调用可能已经进行了检查或者能处理空结果
-            return set(), set()
+            raise ValueError(f"起始节点 '{start_node}' 不存在于图中。")
 
-        all_reachable_nodes = {start_node} # 包含起始节点本身
+        all_reachable_nodes = set()
         depth_2_nodes = set()
         
         neighbors_depth_1 = set(graph.neighbors(start_node))
@@ -407,8 +400,8 @@ class Graphs():
                 if node_depth_2 != start_node and node_depth_2 not in neighbors_depth_1:
                     all_reachable_nodes.add(node_depth_2)
                     depth_2_nodes.add(node_depth_2)
-                # elif node_depth_2 in neighbors_depth_1:
-                #     pass # 已经在 all_reachable_nodes 中了
+                elif node_depth_2 in neighbors_depth_1:
+                    pass
         
         return all_reachable_nodes, depth_2_nodes
 
@@ -421,11 +414,7 @@ class Graphs():
             if entity_id and entity_id in self.id2entities:
                 entity_data = self.id2entities[entity_id]
                 # 假设 describe 字段在 id2entities 存储的字典中是字符串或可以安全转换为字符串
-                describe_text = entity_data.get('describe')
-                if isinstance(describe_text, list):
-                    describe_text = ";".join(describe_text) if describe_text else "常规理解"
-                elif not describe_text:
-                    describe_text = "常规理解"
+                describe_text = ";".join(entity_data.get('describe')) or "常规理解"
                 entity_prompt += i + ":" + str(describe_text) + "\n    "
             else:
                 entity_prompt += i + ": 未知实体描述\n    "
@@ -437,10 +426,8 @@ class Graphs():
         found_entities = []
         for name in entities_names:
             entity_id = self.name2id.get(name)
-            if entity_id: # 只需要检查 entity_id 是否存在，id2entities.get(entity_id) 会返回 None 如果不存在
-                entity_data = self.id2entities.get(entity_id)
-                if entity_data:
-                    found_entities.append(entity_data)
+            if entity_id and entity_id in self.id2entities:
+                found_entities.append(self.id2entities[entity_id])
         return found_entities
 
     def get_entity_by_id(self,id:str):
@@ -530,75 +517,6 @@ class DiGraphs(Graphs):
         nt.from_nx(self.G)
         nt.write_html(path, open_browser=False, notebook=False)
 
-    def get_prompt(self, event_names: list[str]) -> str:
-        """
-        根据事件名称列表，生成一个树形结构的事件描述字符串。
-        每个事件及其子事件会根据其在有向图中的层级关系进行缩进。
-
-        Args:
-            event_names (list[str]): 待生成描述的事件名称列表。
-
-        Returns:
-            str: 格式化的事件描述字符串。
-        """
-        event_prompt = "## 过往事件\n"
-        processed_event_ids = set() # 用于跟踪已经处理过的事件ID，避免重复输出
-
-        for name in event_names:
-            start_event_id = self.name2id.get(name)
-            if not start_event_id or start_event_id not in self.G:
-                event_prompt += f"---- {name}: 未知事件或不在图中\n"
-                continue
-            
-            # 如果该事件或其父事件已经被处理过，则跳过，避免重复的子树
-            if start_event_id in processed_event_ids:
-                continue
-
-            # 对于每个起始事件，进行深度优先遍历以构建其子树
-            # 使用一个栈来模拟递归，存储 (node_id, depth)
-            stack = [(start_event_id, 0)]
-            
-            # 用于记录当前路径上的节点，以便正确判断是否是新节点
-            current_path_nodes = set()
-
-            while stack:
-                current_node_id, current_depth = stack.pop() # LIFO，方便处理树结构
-
-                # 如果当前节点已经处理过（作为某个子树的一部分），则跳过
-                if current_node_id in processed_event_ids:
-                    continue
-                
-                # 获取节点名称和描述
-                node_data = self.id2entities.get(current_node_id)
-                if not node_data:
-                    continue # 节点数据不存在，跳过
-
-                event_name = node_data.get('name', f"未知事件({current_node_id})")
-                describe_text = node_data.get('describe')
-                if isinstance(describe_text, list):
-                    describe_text = ";".join(describe_text) if describe_text else "无描述"
-                elif not describe_text:
-                    describe_text = "无描述"
-
-                # 构建缩进
-                indent = "    " * current_depth # 4个空格作为一级缩进
-                prefix = ""
-                if current_depth > 0:
-                    prefix = "----" # 深度大于0的事件前加横线
-
-                event_prompt += f"{indent}{prefix}{event_name}: {describe_text}\n"
-                processed_event_ids.add(current_node_id) # 标记为已处理
-
-                # 查找当前节点的子事件 (successors)
-                # 注意：NetworkX 的 successors 返回的是一个迭代器，需要转换为列表
-                children_nodes = list(self.G.successors(current_node_id))
-                
-                # 将子节点以逆序推入栈中，以便在 pop 时按正序处理
-                # 确保子事件在父事件之后被处理，且同一层级的子事件顺序一致
-                for child_id in reversed(children_nodes):
-                    if child_id not in processed_event_ids: # 避免循环和重复处理
-                        stack.append((child_id, current_depth + 1))
-        return event_prompt
 
 
 class Entity_Graph():
