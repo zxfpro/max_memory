@@ -1,10 +1,57 @@
+'''
 Author: 赵雪峰
 Date: 2025-08-01 14:31:16
 LastEditors: 823042332@qq.com 823042332@qq.com
-LastEditTime: 2025-08-08 09:32:37
+LastEditTime: 2025-08-08 10:30:43
 FilePath: /max_memory/src/max_memory/core.py
 Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koroFileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
+
+
+
+import networkx as nx
+
+def find_related_edges_greedy_flexible_networkx(graph: nx.Graph | nx.DiGraph, nodes_to_check: list) -> list[tuple]:
+    """
+    在一个 NetworkX 图中，以“贪婪”方式查找与给定任意数量节点相关的**所有**边。
+    
+    “贪婪”意味着只要一条边的任一端点在 `nodes_to_check` 集合中，
+    这条边就会被包含在结果中。
+
+    Args:
+        graph: 一个 NetworkX Graph (无向图) 或 DiGraph (有向图) 对象。
+        nodes_to_check: 一个包含所有目标节点的列表、元组或集合。
+
+    Returns:
+        一个包含所有符合条件的边的列表。每条边表示为一个元组 (u, v)。
+        对于无向图，返回的边会进行标准化（例如，总是 (min_node, max_node)）
+        以确保结果的唯一性和一致性。
+    """
+    # 将目标节点列表转换为一个集合，以便进行 O(1) 的快速查找
+    # 这一步非常重要，无论输入是列表、元组还是集合，都能正确处理
+    target_nodes_set = set(nodes_to_check)
+    
+    # 使用集合来存储找到的边，自动处理重复和顺序问题
+    found_edges = set()
+
+    # 遍历图中的所有边
+    for u, v in graph.edges():
+        # 检查边的任一端点是否在目标节点集合中
+        if u in target_nodes_set or v in target_nodes_set:
+            if graph.is_directed():
+                # 对于有向图，直接添加边 (u, v)
+                found_edges.add((u, v))
+            else:
+                # 对于无向图，为了保证结果的唯一性，
+                # 将边标准化为 (较小节点, 较大节点) 的形式
+                standard_edge = tuple(sorted((u, v)))
+                found_edges.add(standard_edge)
+                
+    # 将集合转换回列表并返回
+    return list(found_edges)
+
+
+
 from pyvis.network import Network
 import networkx as nx
 import re
@@ -29,9 +76,8 @@ class Graphs():
         self.name2id = {}
         self.id2entities = {}
         self.path = path
-        
-        if os.path.exists(self.path):
-            self.load_graph()
+        # if os.path.exists(self.path):
+        #     self.load_graph()
 
     def save_graph(self):
         with open(self.path, "wb") as f:
@@ -57,6 +103,7 @@ class Graphs():
                         i.get('object_id'),
                           {"proportion":i.get("proportion",1)}) 
                        for i in entities_relations]
+        
         self.G.add_nodes_from(nodes_graph)
         self.G.add_edges_from(edges_graph)
         self.save_graph()
@@ -145,7 +192,7 @@ class Graphs():
             if entity_id and entity_id in self.id2entities:
                 entity_data = self.id2entities[entity_id]
                 # 假设 describe 字段在 id2entities 存储的字典中是字符串或可以安全转换为字符串
-                describe_text = entity_data.get('describe') or "常规理解"
+                describe_text = ";".join(entity_data.get('describe')) or "常规理解"
                 entity_prompt += i + ":" + str(describe_text) + "\n    "
             else:
                 entity_prompt += i + ": 未知实体描述\n    "
