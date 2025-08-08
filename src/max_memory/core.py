@@ -235,7 +235,7 @@ class Graphs():
         """
         将另一个 Graphs 实例的图合并到当前实例中。
         同时会更新当前实例的 name2id 和 id2entities 映射。
-
+        for example : node_mapping_by_name={"蚂蚁2":"蚂蚁集团"} 新增nodes : 旧nodes
         Args:
             other_graph_instance (Graphs): 另一个 Graphs 实例。
             node_mapping_by_name (dict, optional): 节点名称的映射关系。
@@ -535,6 +535,8 @@ class Entity_Graph():
                 return 'UUID_ENTITY'
         
         return 'GENERIC_STRING'
+
+
 
 
 # class Event_Graph():
