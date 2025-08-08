@@ -1,10 +1,10 @@
 '''
-Author: 823042332@qq.com 823042332@qq.com
+Author: 赵雪峰
 Date: 2025-08-01 14:31:16
 LastEditors: 823042332@qq.com 823042332@qq.com
 LastEditTime: 2025-08-07 17:08:16
 FilePath: /max_memory/src/max_memory/core.py
-Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koroFileHeader/wiki/%E9%85%8D%E7%BD%AE
 '''
 from pyvis.network import Network
 import networkx as nx
@@ -472,4 +472,3 @@ class Entity_Graph():
     
 #     def get_entity_by_name(self,name:str)->Events:
 #         return self.name2events.get(name)
-    
