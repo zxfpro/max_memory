@@ -40,11 +40,18 @@ async def root():
     """ x """
     return {"message": "Service is running."}
 
+
+from pydantic import BaseModel, Field
+
+class UpdateItem(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500, description="用于搜索的查询文本。")
+
 @app.post(
     "/update_text",
+    summary="搜索文本嵌入",
     description="将聊天或者文本内容上传到记忆中",
     )
-def update_text(text:str):
+def update_text(item:UpdateItem):
     ID_RANDOM_POOL = ",".join([str(uuid.uuid4())[:16] for i in range(100)])
     prompt_1 = ptt.format(
     user_rule = user_rule,
@@ -52,7 +59,7 @@ def update_text(text:str):
     ID_RANDOM_POOL = ID_RANDOM_POOL,
     )
 
-    result_gener = memory.bx.product_stream(prompt_1 + "\n" + text)
+    result_gener = memory.bx.product_stream(prompt_1 + "\n" + item.text)
     result = ""
     for result_i in result_gener:
         result += result_i
@@ -63,6 +70,9 @@ def update_text(text:str):
     # save 一下
     graph.save_graph()
     digraph.save_graph()
+    return {"status": "success"}
+
+
 
 @app.get(
     "/show_graph",
@@ -71,31 +81,36 @@ def update_text(text:str):
 def show_graphs():
     graph.show_graph("main_graph.html")
     digraph.show_graph("main_degraph.html")
+    return {"status": "success"}
+
+class BuildItem(BaseModel):
+    similarity_top_k: int = 2
+    similarity_cutoff: float = 0.8
 
 
-@app.get(
+@app.post(
     "/build",
     description="搜索前的准备工作, 必须要build 完毕才能再构建",
     )
-def build(similarity_top_k:int = 2, similarity_cutoff:float=0.8):
+def build(item: BuildItem):
 
     memory.build(
             index,graph,digraph,
-            similarity_top_k = similarity_top_k,
-            similarity_cutoff=similarity_cutoff
+            similarity_top_k = item.similarity_top_k,
+            similarity_cutoff=item.similarity_cutoff
                 )
-    # save 一下
     return {'message':'success'}
 
 
 @app.get("/search",
     description="根据关键词搜索, 返回system prompt",
     )
-def search(prompt_no_history:str,depth: int = 2)->str:
-
+def search(prompt_no_history: str,depth: int = 2):
+    print(prompt_no_history,'prompt_no_history')
+    print(depth,'depth')
     system_prompt = memory.get_prompts_search(prompt_no_history = prompt_no_history,depth = depth)
 
-    return system_prompt
+    return {"message":system_prompt}
 
 
 
