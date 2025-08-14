@@ -56,7 +56,7 @@ def update_text(item:UpdateItem):
     prompt_1 = ptt.format(
     user_rule = user_rule,
     data_struct = data_struct,
-    ID_RANDOM_POOL = ID_RANDictOM_POOL,
+    ID_RANDOM_POOL = ID_RANDOM_POOL,
     )
 
     result_gener = memory.bx.product_stream(prompt_1 + "\n" + item.text)
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     # 当通过 python -m YourPackageName 执行 __main__.py 时，__name__ 也是 "__main__"
     import argparse
     import uvicorn
-    from max_memory.log import Log
+    from .log import Log
 
     parser = argparse.ArgumentParser(
         description="Start a simple HTTP server similar to http.server."
@@ -174,7 +174,7 @@ if __name__ == "__main__":
         port += 100
         Log.reset_level('debug',env = args.env)
         reload = True
-        app_import_string = "max_memory.server:app" # <--- 关键修改：传递导入字符串
+        app_import_string = "src.max_memory.server:app" # <--- 关键修改：传递导入字符串
     elif args.env == "prod":
         Log.reset_level('info',env = args.env)# ['debug', 'info', 'warning', 'error', 'critical']
         reload = False
