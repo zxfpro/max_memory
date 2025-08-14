@@ -1,20 +1,12 @@
-'''
-Author: 823042332@qq.com 823042332@qq.com
-Date: 2025-08-01 14:38:17
-LastEditors: 823042332@qq.com 823042332@qq.com
-LastEditTime: 2025-08-08 10:51:32
-FilePath: /max_memory/src/max_memory/indexs.py
-Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
-'''
-import qdrant_client
+# Embedding
 
+import qdrant_client
 from typing import Any, List
 from llama_index.core.bridge.pydantic import PrivateAttr
 from llama_index.core.embeddings import BaseEmbedding
-from volcenginesdkarkruntime import Ark
-
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.core import VectorStoreIndex
+from volcenginesdkarkruntime import Ark
 
 
 class VolcanoEmbedding(BaseEmbedding):

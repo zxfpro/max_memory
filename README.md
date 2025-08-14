@@ -1,7 +1,15 @@
+<!--
+ * @Author: 823042332@qq.com 823042332@qq.com
+ * @Date: 2025-08-01 14:31:15
+ * @LastEditors: 823042332@qq.com 823042332@qq.com
+ * @LastEditTime: 2025-08-12 16:52:16
+ * @FilePath: /max_memory/README.md
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+-->
 # 记忆系统
 
-
-
+# TOOD 1 加统计类决定分数
+## 概念检索
 #TODO radio
 
 
@@ -65,3 +73,16 @@
 2 大模型具备大量知识, 所以他们应该具有对应的潜力, 只需要使用对应的prompt 即可诱导出来
 
 考虑有无必要性
+
+
+AI Change History
+from program_writing_assistant.core import EditCode
+ec = EditCode('/Users/zhaoxuefeng/GitHub/max_memory/src/max_memory/core.py')
+ec.edit('优化一下 show_graph 函数, 呈现方式改为显示名称')
+ec.edit('可见, find_related_edges_greedy_flexible_networkx 函数已经验证了其正确性, 将它整合到 Graphs 类中, 增加合并能力,注意, 要要考虑(name2id id2entities)等 ')
+ec.edit('merge_graphs_with_advanced_aliases 函数已经验证了其正确性, 将它整合到 Graphs 类中, 增加合并其他图的能力,注意, 要要考虑(name2id id2entities)等 ')
+ec.edit('我发现, merge_other_graph函数中的 node_mapping参数, 需要传入 id 的字典对应表,我希望使用name来做对应 可以使用get_nodes_by_name函数来转换')
+ec.edit('做一个DiGraphs 继承Graphs 变为 nx.DiGraph() 重写一下 show_graph 方法')
+ec.edit("参照Entity_Graph 编写Event_Graph 类, 重写process 可以参照里面的event_process 函数")
+ec.edit("重写Digraphs 中的 参考注释中的find_nodes_by_depth ")
+ec.edit("编写 Memory 类, 其他的已经成型,不要改动, Memory 类的核心宗旨是提供一个聊天的对外接口, 允许聊天, 存储,检索等功能 ")

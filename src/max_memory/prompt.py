@@ -50,11 +50,6 @@ data_struct = """
 ```
 """
 
-## ID_RANDOM_POOL
-
-ID_RANDOM_POOL = [str(uuid.uuid4())[:16] for i in range(100)]
-
-
 prompt = """
 **角色:**你是一名高效、精确的信息抽取与知识图谱构建专家。你的任务是从用户提供的文章中,按照严格定义的结构化要求,抽取并组织事件信息。
 
