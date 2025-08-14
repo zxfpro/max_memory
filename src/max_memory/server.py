@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from max_memory.memory import Memory
@@ -41,7 +40,7 @@ async def root():
     """ x """
     return {"message": "Service is running."}
 
-@app.get(
+@app.post(
     "/update_text",
     description="将聊天或者文本内容上传到记忆中",
     )
