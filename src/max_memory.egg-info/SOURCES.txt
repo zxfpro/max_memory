@@ -5,7 +5,6 @@ src/max_memory/demo_data.py
 src/max_memory/graphs.py
 src/max_memory/indexs.py
 src/max_memory/log.py
-src/max_memory/main.py
 src/max_memory/memory.py
 src/max_memory/prompt.py
 src/max_memory/server.py

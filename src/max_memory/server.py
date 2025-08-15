@@ -1,10 +1,12 @@
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from max_memory.memory import Memory
 from max_memory.indexs import get_index
 from max_memory.graphs import Graphs, DiGraphs
-from max_memory.prompt import ptt, user_rule, data_struct
+
 from max_memory.utils import extract_python_code
+
 import uuid
 import json
 app = FastAPI(
@@ -29,19 +31,17 @@ app.add_middleware(
 )
 
 
-memory= Memory()
+
 index = get_index(collection_name = 'test_1')
 graph = Graphs("main_graph.pickle")
 digraph = DiGraphs("main_degraph.pickle")
 
+memory= Memory(index,graph,digraph)
 
 @app.get("/")
 async def root():
     """ x """
     return {"message": "Service is running."}
-
-
-from pydantic import BaseModel, Field
 
 class UpdateItem(BaseModel):
     text: str = Field(..., min_length=1, max_length=500, description="用于搜索的查询文本。")
@@ -52,26 +52,8 @@ class UpdateItem(BaseModel):
     description="将聊天或者文本内容上传到记忆中",
     )
 def update_text(item:UpdateItem):
-    ID_RANDOM_POOL = ",".join([str(uuid.uuid4())[:16] for i in range(100)])
-    prompt_1 = ptt.format(
-    user_rule = user_rule,
-    data_struct = data_struct,
-    ID_RANDOM_POOL = ID_RANDOM_POOL,
-    )
-
-    result_gener = memory.bx.product_stream(prompt_1 + "\n" + item.text)
-    result = ""
-    for result_i in result_gener:
-        result += result_i
-
-    result = extract_python_code(result)
-    data_dict = json.loads(result)
-    memory.update(index,graph,digraph,data_dict)
-    # save 一下
-    graph.save_graph()
-    digraph.save_graph()
+    memory.update(item.text)
     return {"status": "success"}
-
 
 
 @app.get(
@@ -79,8 +61,7 @@ def update_text(item:UpdateItem):
     description="展示图",
     )
 def show_graphs():
-    graph.show_graph("main_graph.html")
-    digraph.show_graph("main_degraph.html")
+    memory.show('main')
     return {"status": "success"}
 
 class BuildItem(BaseModel):
@@ -93,25 +74,24 @@ class BuildItem(BaseModel):
     description="搜索前的准备工作, 必须要build 完毕才能再构建",
     )
 def build(item: BuildItem):
-
     memory.build(
-            index,graph,digraph,
             similarity_top_k = item.similarity_top_k,
             similarity_cutoff=item.similarity_cutoff
                 )
     return {'message':'success'}
 
 
-@app.get("/search",
+
+class SearchItem(BaseModel):
+    prompt_no_history: str = Field(..., min_length=1, max_length=500, description="用于搜索的查询文本。")
+    depth: int = 2
+    
+@app.post("/search",
     description="根据关键词搜索, 返回system prompt",
     )
-def search(prompt_no_history: str,depth: int = 2):
-    print(prompt_no_history,'prompt_no_history')
-    print(depth,'depth')
-    system_prompt = memory.get_prompts_search(prompt_no_history = prompt_no_history,depth = depth)
-
-    return {"message":system_prompt}
-
+def search(item:SearchItem):
+    system_prompt = memory.get_prompts_search(prompt_no_history = item.prompt_no_history,depth = item.depth)
+    return {'message':system_prompt}
 
 
 @app.get("/update_session",
@@ -122,7 +102,6 @@ def update_session(prompt_with_history:str)->str:
         memory.update_session(prompt_with_history = prompt_with_history)
     except Exception as e:
         return "failed"
-
     return "update_session successful"
 
 

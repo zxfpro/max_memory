@@ -15,7 +15,6 @@ from llama_index.core.vector_stores import (
     FilterOperator,
 )
 
-
 def merge_graphs_with_advanced_aliases(
     graph1: nx.Graph,
     graph2: nx.Graph,
@@ -155,7 +154,6 @@ def merge_graphs_with_advanced_aliases(
 
     return merged_graph
 
-
 def find_related_edges_greedy_flexible_networkx(
     graph: nx.Graph | nx.DiGraph, nodes_to_check: list
 ) -> list[tuple]:
@@ -198,22 +196,30 @@ def find_related_edges_greedy_flexible_networkx(
     return list(found_edges)
 
 
+
 class Graphs:
     def __init__(self, path="save.pickle"):
         self.G = nx.Graph()
         self.name2id = {}
         self.id2entities = {}
         self.path = path
-        # if os.path.exists(self.path):
-        #     self.load_graph()
 
     def save_graph(self):
         with open(self.path, "wb") as f:
-            pickle.dump(self.G, f)
+            datas = {
+                "G":self.G,
+                "name2id":self.name2id,
+                "id2entities":self.id2entities,
+            }
+            pickle.dump(datas, f)
 
     def load_graph(self):
         with open(self.path, "rb") as f:
-            self.G = pickle.load(f)
+            datas = pickle.load(f)
+        self.G = datas.get('G')
+        print(datas,'datas')
+        self.name2id = datas.get('name2id')
+        self.id2entities = datas.get('id2entities')
 
     def show_graph(self, path="basic.html"):
         nt = Network("1000px", "1000px")
@@ -224,7 +230,8 @@ class Graphs:
         nt.from_nx(self.G)
         nt.write_html(path, open_browser=False, notebook=False)
 
-    def update(self, entities_relations, id2entities, name2id):
+    def update(self, data_dict):
+        entities_relations, id2entities, name2id = self._process(data_dict)
         nodes_graph = [(id, dic) for id, dic in id2entities.items()]
         edges_graph = [
             (
@@ -237,17 +244,15 @@ class Graphs:
 
         self.G.add_nodes_from(nodes_graph)
         self.G.add_edges_from(edges_graph)
-        self.save_graph()
         self.name2id.update(name2id)  # 合并 name2id
         self.id2entities.update(id2entities)  # 合并 id2entities
 
-    def merge_other_graph(
-        self, other_graph_instance: "Graphs", node_mapping_by_name: dict = None
-    ):
+    def merge_other_graph(self, other_graph_instance: "Graphs", node_mapping_by_name: dict = None,
+                                replace = False):
         """
         将另一个 Graphs 实例的图合并到当前实例中。
         同时会更新当前实例的 name2id 和 id2entities 映射。
-        for example : node_mapping_by_name={"蚂蚁2":"蚂蚁集团"} 新增nodes : 旧nodes
+        for example : node_mapping_by_name={"待插入的graph":"原始graph"} 新增nodes : 旧nodes   蚂蚁2 : 蚂蚁集团
         Args:
             other_graph_instance (Graphs): 另一个 Graphs 实例。
             node_mapping_by_name (dict, optional): 节点名称的映射关系。
@@ -299,7 +304,6 @@ class Graphs:
             self.G, other_graph_instance.G, node_mapping_by_id
         )
         self.G = merged_nx_graph
-
         # 更新 name2id 和 id2entities
         # 遍历合并后的图的节点，重新构建或更新 name2id 和 id2entities
         new_name2id = {}
@@ -336,6 +340,9 @@ class Graphs:
         self.id2entities = new_id2entities
         self.save_graph()
 
+    def get_nodes_by_name(self, name):
+        return self.find_nodes_by_attribute(self.G, "name", name)
+
     def find_nodes_by_attribute(self, graph, attribute_name, attribute_value):
         matching_nodes = []
         for node_id, node_data in graph.nodes(data=True):
@@ -343,12 +350,7 @@ class Graphs:
                 matching_nodes.append((node_id, node_data))
         return matching_nodes
 
-    def get_nodes_by_name(self, name):
-        return self.find_nodes_by_attribute(self.G, "name", name)
-
-    def search_graph(
-        self, result_names: list[str], depth: int = 2, output_type: str = "prompt"
-    ) -> set:
+    def search_graph(self, result_names: list[str], depth: int = 2, output_type: str = "prompt") -> set:
         """
         根据节点名称列表，在图中搜索相关实体。
 
@@ -458,6 +460,84 @@ class Graphs:
             以确保结果的唯一性和一致性。
         """
         return find_related_edges_greedy_flexible_networkx(self.G, nodes_to_check)
+
+    def _process(self, data_dict: dict):
+        if data_dict:
+            x = []
+            for i in data_dict.get("entities_relations"):
+                if self._identify_string_type(i.get("object_id")) == "GENERIC_STRING":
+                    x.append(
+                        {
+                            "id": str(uuid.uuid4())[:16],
+                            "name": i.get("object_id"),  # 确保新生成的实体有name属性
+                            "describe": [],  # 为新生成的实体添加默认的 describe 字段，与现有结构保持一致
+                        }
+                    )
+
+            entities = x + data_dict.get("entities")
+
+            id2entities = {i.get("id"): i for i in entities}
+            name2id = {
+                i.get("name"): i.get("id")
+                for i in entities
+                if i.get("name") is not None
+            }  # 确保name存在
+
+            entities_relations = []
+            for i in data_dict.get("entities_relations"):
+                subject_id = i.get("subject_id")
+                object_id_raw = i.get("object_id")
+
+                if self._identify_string_type(object_id_raw) == "GENERIC_STRING":
+                    object_id = name2id.get(object_id_raw)  # 从name2id获取object_id
+                    if object_id is None:  # 如果未能找到，可能需要创建或跳过
+                        print(
+                            f"Warning: Object '{object_id_raw}' not found in name2id map during relation processing. Skipping relation."
+                        )
+                        continue
+                else:
+                    object_id = object_id_raw
+
+                # 检查 subject_id 和 object_id 是否都存在于 id2entities 中
+                if subject_id in id2entities and object_id in id2entities:
+                    entities_relations.append(
+                        {
+                            "subject_id": subject_id,
+                            "proportion": 0.8,
+                            "object_id": object_id,
+                        }
+                    )
+                else:
+                    print(
+                        f"Warning: Relation involving unknown subject_id '{subject_id}' or object_id '{object_id}'. Skipping relation."
+                    )
+
+            return entities_relations, id2entities, name2id
+        else:
+            return [], {}, {}
+
+    def _identify_string_type(self, text: str) -> str:
+        if not isinstance(text, str):
+            return "GENERIC_STRING"
+
+        text_lower = text.lower()
+
+        try:
+            uuid_obj = uuid.UUID(text_lower)
+            if str(uuid_obj) == text_lower or str(uuid_obj).replace(
+                "-", ""
+            ) == text_lower.replace("-", ""):
+                return "UUID_ENTITY"
+        except ValueError:
+            pass
+
+        uuid_char_pattern = re.compile(r"^[0-9a-f-]+$")
+
+        if uuid_char_pattern.fullmatch(text_lower):
+            if len(text) > 1 and any(c.isalnum() for c in text):
+                return "UUID_ENTITY"
+
+        return "GENERIC_STRING"
 
 
 class DiGraphs(Graphs):
@@ -625,165 +705,6 @@ class DiGraphs(Graphs):
 
         return result_by_depth
 
-class Entity_Graph:
-    def __init__(self):
-        self._build = False
-
-    def update(self, index, graph, data_dict):
-        entities_relations, id2entities, name2id = self._process(data_dict)
-        graph.update(entities_relations, id2entities, name2id)
-        # 在更新后，确保 G.nodes 中有 'name' 属性，因为 Graph.update 接受的是 (id, dic)
-        # 这里的 graph.G.nodes[i].get("name") 应该能正确获取
-        for i in list(graph.G.nodes):
-            node_data = graph.G.nodes[i]  # 获取节点属性字典
-            doc = Document(
-                text=node_data.get("name"),  # 使用节点的 'name' 属性作为文本
-                metadata={"type": "entity", "id": i},
-                excluded_embed_metadata_keys=["type", "id"],
-                id_=i,
-            )
-            index.update(document=doc)
-
-    def build(self, index, G, similarity_top_k: int = 2, similarity_cutoff=0.8):
-        self.postprocess = SimilarityPostprocessor(similarity_cutoff=similarity_cutoff)
-        self.retriver = index.as_retriever(
-            similarity_top_k=similarity_top_k,
-            filters=MetadataFilters(
-                filters=[
-                    MetadataFilter(
-                        key="type", operator=FilterOperator.EQ, value="entity"
-                    ),
-                ]
-            ),
-        )
-        self.G = G
-        self._build = True
-
-    def search(self, text, depth=2, output_type="prompt"):
-        assert self._build == True
-        result_nodes = self.postprocess.postprocess_nodes(self.retriver.retrieve(text))
-        # result_text 现在是包含节点名称的列表，可以直接传递给 Graphs.search_graph
-        result_names = [node.text for node in result_nodes]
-        result = self.G.search_graph(result_names, depth=depth, output_type=output_type)
-        return result
-
-    def _process(self, data_dict: dict):
-        if data_dict:
-            x = []
-            for i in data_dict.get("entities_relations"):
-                if self._identify_string_type(i.get("object_id")) == "GENERIC_STRING":
-                    x.append(
-                        {
-                            "id": str(uuid.uuid4())[:16],
-                            "name": i.get("object_id"),  # 确保新生成的实体有name属性
-                            "describe": [],  # 为新生成的实体添加默认的 describe 字段，与现有结构保持一致
-                        }
-                    )
-
-            entities = x + data_dict.get("entities")
-
-            id2entities = {i.get("id"): i for i in entities}
-            name2id = {
-                i.get("name"): i.get("id")
-                for i in entities
-                if i.get("name") is not None
-            }  # 确保name存在
-
-            entities_relations = []
-            for i in data_dict.get("entities_relations"):
-                subject_id = i.get("subject_id")
-                object_id_raw = i.get("object_id")
-
-                if self._identify_string_type(object_id_raw) == "GENERIC_STRING":
-                    object_id = name2id.get(object_id_raw)  # 从name2id获取object_id
-                    if object_id is None:  # 如果未能找到，可能需要创建或跳过
-                        print(
-                            f"Warning: Object '{object_id_raw}' not found in name2id map during relation processing. Skipping relation."
-                        )
-                        continue
-                else:
-                    object_id = object_id_raw
-
-                # 检查 subject_id 和 object_id 是否都存在于 id2entities 中
-                if subject_id in id2entities and object_id in id2entities:
-                    entities_relations.append(
-                        {
-                            "subject_id": subject_id,
-                            "proportion": 0.8,
-                            "object_id": object_id,
-                        }
-                    )
-                else:
-                    print(
-                        f"Warning: Relation involving unknown subject_id '{subject_id}' or object_id '{object_id}'. Skipping relation."
-                    )
-
-            return entities_relations, id2entities, name2id
-        else:
-            return [], {}, {}
-
-    def _identify_string_type(self, text: str) -> str:
-        if not isinstance(text, str):
-            return "GENERIC_STRING"
-
-        text_lower = text.lower()
-
-        try:
-            uuid_obj = uuid.UUID(text_lower)
-            if str(uuid_obj) == text_lower or str(uuid_obj).replace(
-                "-", ""
-            ) == text_lower.replace("-", ""):
-                return "UUID_ENTITY"
-        except ValueError:
-            pass
-
-        uuid_char_pattern = re.compile(r"^[0-9a-f-]+$")
-
-        if uuid_char_pattern.fullmatch(text_lower):
-            if len(text) > 1 and any(c.isalnum() for c in text):
-                return "UUID_ENTITY"
-
-        return "GENERIC_STRING"
-
-class Event_Graph:
-    def __init__(self):
-        self._build = False
-
-    def update(self, index, graph: DiGraphs, data_dict):
-        events_relations, id2events, name2id = self._process(data_dict)
-        graph.update(events_relations, id2events, name2id)
-        for i in list(graph.G.nodes):
-            node_data = graph.G.nodes[i]
-            doc = Document(
-                text=node_data.get("name"),
-                metadata={"type": "event", "id": i},
-                excluded_embed_metadata_keys=["type", "id"],
-                id_=i,
-            )
-            index.update(document=doc)
-
-    def build(self, index, G, similarity_top_k: int = 2, similarity_cutoff=0.8):
-        self.postprocess = SimilarityPostprocessor(similarity_cutoff=similarity_cutoff)
-        self.retriver = index.as_retriever(
-            similarity_top_k=similarity_top_k,
-            filters=MetadataFilters(
-                filters=[
-                    MetadataFilter(
-                        key="type", operator=FilterOperator.EQ, value="event"
-                    ),
-                ]
-            ),
-        )
-        self.G = G
-        self._build = True
-
-    def search(self, text, depth=2, output_type="prompt"):
-        assert self._build == True
-        result_nodes = self.postprocess.postprocess_nodes(self.retriver.retrieve(text))
-        result_names = [node.text for node in result_nodes]
-        result = self.G.search_graph(result_names, depth=depth, output_type=output_type)
-        return result
-
     def _process(self, data_dict: dict):
         if data_dict:
             events = data_dict.get("events", [])
@@ -822,3 +743,72 @@ class Event_Graph:
             return processed_relations, id2events, name2id
         else:
             return [], {}, {}
+
+
+class Entitys:
+    def __init__(self,index,graph):
+        # graph 要在外面做好load 逻辑以后再导入
+        self._build = False
+        self.index = index
+        self.graph = graph
+        self.type = "entity"
+
+    def show(self, path:str):
+        self.graph.show_graph(path)
+
+    def update(self,data_dict):
+        # 更新Graph
+        # 在更新后，确保 G.nodes 中有 'name' 属性，因为 Graph.update 接受的是 (id, dic)
+        # 这里的 graph.G.nodes[i].get("name") 应该能正确获取
+        self.graph.update(data_dict)
+        self.graph.save_graph()
+
+        # 更新Index
+        for i in list(self.graph.G.nodes):
+            node_data = self.graph.G.nodes[i]  # 获取节点属性字典
+            doc = Document(
+                text=node_data.get("name"),  # 使用节点的 'name' 属性作为文本
+                metadata={"type": self.type, "id": i},
+                excluded_embed_metadata_keys=["type", "id"],
+                id_=i,
+            )
+            self.index.update(document=doc)
+        self._build = False
+
+    def build(self,similarity_top_k: int = 2, similarity_cutoff=0.8):
+        self.postprocess = SimilarityPostprocessor(similarity_cutoff=similarity_cutoff)
+        self.retriver = self.index.as_retriever(
+            similarity_top_k=similarity_top_k,
+            filters=MetadataFilters(
+                filters=[
+                    MetadataFilter(
+                        key="type", operator=FilterOperator.EQ, value=self.type
+                    ),
+                ]
+            ),
+        )
+        self._build = True
+
+    def mergin(self,graph):
+        # 如何获取
+        node_mapping_by_name = { # 所有同名的人都合并??
+        "数字化":"数字孪生",
+        "未来工厂":"未来工厂"
+        }
+        self.graph.merge_other_graph(graph,node_mapping_by_name = node_mapping_by_name)
+
+    def search(self, text:str, depth=2, output_type="prompt"):
+        assert self._build == True
+        result_nodes = self.postprocess.postprocess_nodes(self.retriver.retrieve(text))
+        # result_text 现在是包含节点名称的列表，可以直接传递给 Graphs.search_graph
+        result_names = [node.text for node in result_nodes]
+        result = self.graph.search_graph(result_names, depth=depth, output_type=output_type)
+        return result
+
+    
+
+class Event(Entitys):
+    def __init__(self,index, graph):
+        super().__init__(index, graph)
+        self.type = "event"
+
