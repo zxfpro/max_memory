@@ -217,7 +217,6 @@ class Graphs:
         with open(self.path, "rb") as f:
             datas = pickle.load(f)
         self.G = datas.get('G')
-        print(datas,'datas')
         self.name2id = datas.get('name2id')
         self.id2entities = datas.get('id2entities')
 
@@ -350,7 +349,7 @@ class Graphs:
                 matching_nodes.append((node_id, node_data))
         return matching_nodes
 
-    def search_graph(self, result_names: list[str], depth: int = 2, output_type: str = "prompt") -> set:
+    def search_graph(self, result_names: list[str], depth: int = 2, output_type: str = "prompt") -> str:
         """
         根据节点名称列表，在图中搜索相关实体。
 
@@ -790,14 +789,14 @@ class Entitys:
         self._build = True
 
     def mergin(self,graph):
-        # 如何获取
+        #TODO 如何获取
         node_mapping_by_name = { # 所有同名的人都合并??
         "数字化":"数字孪生",
         "未来工厂":"未来工厂"
         }
         self.graph.merge_other_graph(graph,node_mapping_by_name = node_mapping_by_name)
 
-    def search(self, text:str, depth=2, output_type="prompt"):
+    def search(self, text:str, depth=2, output_type="prompt")->str | Graphs:
         assert self._build == True
         result_nodes = self.postprocess.postprocess_nodes(self.retriver.retrieve(text))
         # result_text 现在是包含节点名称的列表，可以直接传递给 Graphs.search_graph

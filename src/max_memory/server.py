@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from max_memory.memory import Memory
 from max_memory.indexs import get_index
-from max_memory.graphs import Graphs, DiGraphs
+
 
 from max_memory.utils import extract_python_code
 
@@ -30,13 +30,6 @@ app.add_middleware(
     allow_headers=["*"],    # Allows all headers (Content-Type, Authorization, etc.)
 )
 
-
-
-index = get_index(collection_name = 'test_1')
-graph = Graphs("main_graph.pickle")
-digraph = DiGraphs("main_degraph.pickle")
-
-memory= Memory(index,graph,digraph)
 
 @app.get("/")
 async def root():

@@ -1,4 +1,4 @@
-import uuid
+# 1
 from llama_index.core import PromptTemplate
 
 ## 对应适配的prompt
@@ -17,12 +17,11 @@ user_rule = """
 
 """
 
-## 数据结构定义
 
 data_struct = """
 ```json
 {
-  "entities": [ // 文章中的核心对象, 要求相同概念合并, 如 人工智能与AI
+  "entities": [ // 文章中的核心对象, 要求相同概念合并, 如 人工智能与AI。对于在关系中作为独立概念出现的抽象名词（如“出行与生活”），也应将其视为实体并赋予UUID。
   {
    "id": "string", // 唯一标识符,从 ID_RANDOM_POOL 中抽取
    "name": "string", // 核心对象
@@ -33,7 +32,7 @@ data_struct = """
    {
   "subject_id": "string", // 发出对象的唯一标识符,与entities对应
   "relation": "MANIFESTS_AS", // 关系类型
-  "object_id": "获取知识和信息的方式", // 接收对象的唯一标识符,与entities对应
+  "object_id": "string", // 接收对象的唯一标识符,必须是UUID，与entities对应
   }],
  "events": [ // 细粒度的基本事件列表,每个事件都是一个原子信息单元
   {
@@ -67,7 +66,7 @@ prompt = """
 **输出JSON Schema:**
 
 请严格按照以下JSON结构输出,不得有任何额外内容或偏差。
-
+禁止在subject_id,  object_id, sub_events_id,中写入非uuid 的内容
 {data_struct}
 ---
 
@@ -82,13 +81,13 @@ prompt = """
           *   **实践-理论/应用 (APPLIES_TO / IS_APPLIED_BY / GUIDES):** (X, APPLIES_TO, Y) / (X, IS_APPLIED_BY, Y) / (X, GUIDES, Y)。语义：X 在 Y 中应用/相关；Y 使用 X；X 为 Y 提供指导。关键词："应用于", "使用", "指导", "针对"。
           *   **发展-历史/创造 (DEVELOPED_BY / PROPOSED_IN / DISCOVERED_IN):** (X, DEVELOPED_BY, Y) / (X, PROPOSED_IN, Y) / (X, DISCOVERED_IN, Y)。语义：X 的起源/创造；X 在 Y 时间被提出/发现。关键词："由...开发", "提出", "发现", "于...年"。
       2.  **关系抽取策略:**
-          a.  遍历 `CONSOLIDATED_ENTITIES` 中的每个 `实体 (entity)`。
-          b.  对于每个 `实体`，分析其 `describe` 列表。
-          c.  对于 `entity.describe` 中的每个 `描述字符串 (description_string)`:
-              i.  执行关键词匹配和浅层语义解析（例如，如果可用，进行依存句法分析，否则使用基于规则的模式匹配）以识别潜在的主语-关系-宾语三元组。
-              ii. **主语 (Subject):** 默认设置为当前 `entity.name`。
-              iii. **宾语 (Object):** 尝试在 `描述字符串` 中识别其他 `CONSOLIDATED_ENTITIES.name` 或 `CONSOLIDATED_ENTITIES.aliases`。如果未找到其他实体，则从描述中提取与关系类型对齐的重要短语或概念。
-              iv. **关系 (Relation):** 将识别到的关键词/模式映射到 `MARXIST_KG_RELATION_TAXONOMY`。优先考虑特异性匹配。通过推断处理双向关系（例如，如果 X MANIFESTS_AS Y，则推断 Y IS_ESSENCE_OF X，除非已明确抽取）。
+          a.  遍历 `CONSOLIDATED_ENTITIES` 中的每个 `实体 (entity)`。\n
+          b.  对于每个 `实体`，分析其 `describe` 列表。\n
+          c.  对于 `entity.describe` 中的每个 `描述字符串 (description_string)`:\n
+              i.  执行关键词匹配和浅层语义解析（例如，如果可用，进行依存句法分析，否则使用基于规则的模式匹配）以识别潜在的主语-关系-宾语三元组。\n
+              ii. **主语 (Subject):** 默认设置为当前 `entity.name`。\n
+              iii. **宾语 (Object):** 尝试在 `描述字符串` 中识别其他 `CONSOLIDATED_ENTITIES.name` 或 `CONSOLIDATED_ENTITIES.aliases`。如果未找到其他实体，则从描述中提取与关系类型对齐的重要短语或概念，并确保该概念在 `entities` 列表中有对应的实体ID。
+              iv. **关系 (Relation):** 将识别到的关键词/模式映射到 `MARXIST_KG_RELATION_TAXONOMY`。优先考虑特异性匹配。通过推断处理双向关系（例如，如果 X MANIFESTS_AS Y，则推断 Y IS_ESSENCE_OF X，除非已明确抽取）。\n
               v.  确保抽取的三元组的唯一性（主语、关系、宾语的组合）。
           d.  **三元组结构:** 每个三元组将是一个字典：`{"subject": "实体名称A", "relation": "关系类型", "object": "实体名称B_或_概念", "description": "支持该关系的原始文本片段"}`。
   *   **输出 (OUTPUT):** `EXTRACTED_RELATIONS`: 结构化关系三元组字典列表。
@@ -107,14 +106,12 @@ ID_RANDOM_POOL
 
 *  **特殊字符检查**:`entities.name`, `events.name`, 字段是否已完全清除特殊字符和Markdown语法?
 
-*  **ID一致性**:所有 `id` 字段是否唯一?`entities_relations` 中的 `subject_id` 和 `object_id` 是否都指向 `entities` 中存在的ID? `sub_events_id` 是否都指向 `events`中存在的ID?
+*  **ID一致性**:所有 `id` 字段是否唯一?`entities_relations` 中的 `subject_id` 和 `object_id` 是否都指向 `entities` 中存在的ID? `sub_events_id` 是否都指向 `events`中存在的ID?**特别注意 `object_id` 必须是UUID。**
 
 *  **作者结构**:检查是否有作者的结构信息?
 
-*  **实体一致性**:
-
-  *  `events` 中的 `involved_entities` 在整个文档中是否保持一致?是否尽可能地具体化了通用词汇?**元素数量是否严格不超过2个?**
-
+*  **实体一致性**:\n
+  *  `events` 中的 `involved_entities` 在整个文档中是否保持一致?是否尽可能地具体化了通用词汇?**元素数量是否严格不超过2个?**\n
   *  所有的 `involved_entities` 中的元素是否都来自于entities?  aliases 的是否进行了统一?
   
 *  **关系语义**:每个 `relation` 的选择是否准确反映了 `subject_id` 和 `object_id` 之间的语义关系?

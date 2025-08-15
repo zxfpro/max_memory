@@ -1,65 +1,69 @@
-from max_memory.graphs import Graphs,DiGraphs, Entitys, E
+from max_memory.graphs import Graphs, DiGraphs, Entitys, Event
 from max_memory.utils import extract_python_code
 import json
 
 import uuid
 from llmada.core import BianXieAdapter
-import json
 import re
+from max_memory.indexs import get_index
+import os
 
 from max_memory.prompt import ptt, user_rule, data_struct
 
 class Memory():
-    def __init__(self,index,graph,digraph):
+    def __init__(self):
         bx = BianXieAdapter()
         model_name = "gemini-2.5-flash-preview-05-20-nothinking"
         bx.model_pool.append(model_name)
         bx.set_model(model_name=model_name)
         self.bx = bx
 
+        index = get_index(collection_name = 'test_1')
+        graph = Graphs("main_graph.pickle")
+        digraph = DiGraphs("main_digraph.pickle")
+
+        # 处理好load逻辑
+        if os.path.exists("main_graph.pickle"):
+            graph.load_graph()
+        if os.path.exists("main_digraph.pickle"):
+            digraph.load_graph()
+
         # 历史的记忆
-        self.entity_graph = Entity_Graph(index,graph)
-        self.event_graph = Event_Graph(index,digraph)
+        self.entity = Entitys(index,graph)
+        self.event = Event(index,digraph)
 
         # 临时的记录
         self.temp_G = Graphs("temp_g.pickle")
         self.temp_DG = DiGraphs("temp_dg.pickle")
     
     def trans_text_2_data_dict(self,text)->dict:
-        ID_RANDOM_POOL = ",".join([str(uuid.uuid4())[:16] for i in range(100)])
+        ID_RANDOM_POOL = ",".join([str(uuid.uuid4()) for i in range(100)])
         prompt_1 = ptt.format(
-        user_rule = user_rule,
-        data_struct = data_struct,
-        ID_RANDOM_POOL = ID_RANDOM_POOL,
-        )
-
-        result_gener = self.bx.product_stream(prompt_1 + "\n" + text)
-        result = ""
-        for result_i in result_gener:
-            result += result_i
-
-        result = extract_python_code(result)
+            user_rule = user_rule,
+            data_struct = data_struct,
+            ID_RANDOM_POOL = ID_RANDOM_POOL,
+            )
+        result = extract_python_code(self.bx.product(prompt_1 + "\n" + text))
         data_dict = json.loads(result)
         return data_dict
 
     def update(self,text):
         data_dict = self.trans_text_2_data_dict(text)
-        self.entity_graph.update(data_dict)
-        self.event_graph.update(data_dict)
+        self.entity.update(data_dict)
+        self.event.update(data_dict)
 
     def show(self,fpath = "main"):
-        self.entity_graph.graph.show_graph(f"{fpath}_graph.html")
-        self.event_graph.graph.show_graph(f"{fpath}_digraph.html")
-
+        self.entity.show(f"{fpath}_graph.html")
+        self.event.show(f"{fpath}_digraph.html")
 
     def build(self, similarity_top_k: int = 2, similarity_cutoff=0.8):
-        self.entity_graph.graph.load_graph()
-        self.event_graph.graph.load_graph()
-        self.entity_graph.build(similarity_top_k = similarity_top_k, similarity_cutoff=similarity_cutoff)
-        self.event_graph.build(similarity_top_k = similarity_top_k, similarity_cutoff=similarity_cutoff)
+        self.entity.build(similarity_top_k = similarity_top_k, similarity_cutoff=similarity_cutoff)
+        self.event.build(similarity_top_k = similarity_top_k, similarity_cutoff=similarity_cutoff)
 
-
-    def resolve(self,text):
+    def get_prompts_search(self,prompt_no_history,depth = 2):
+        # Talk  search
+        # 得到system_prompt  之后使用 加上 chat_history
+        # resolve 
         prompt_22 = """
         用户会与你聊天, 从用户的话语中有特定含义的实体 与主要events(主要事件应该是一个简单句)
 
@@ -70,24 +74,19 @@ class Memory():
         }
         ```
         user: """
-        result = self.bx.product(prompt_22 + text)
+        result = self.bx.product(prompt_22 + prompt_no_history)
         result = extract_python_code(result)
-        return json.loads(result)
-    
-    def get_prompts_search(self,prompt_no_history,depth = 2):
-        # Talk  search
-        # 得到system_prompt  之后使用 加上 chat_history
-        # 分解 
-        message_dict = self.resolve(prompt_no_history) # 沟通
+        message_dict = json.loads(result)
+
         # {'entities': ['沟通'], 'events': ['用户提到了沟通']} message_dict
         # search()
         entity_prompt = ""
         for entity in message_dict.get("entities"):
-            entity_prompt += self.entity_graph.search(entity,depth,output_type = "prompt")
+            entity_prompt += self.entity.search(entity,depth,output_type = "prompt")
 
         event_prompt = ""
         for event in message_dict.get("events"):
-            event_prompt += self.event_graph.search(event,depth,output_type = "prompt")
+            event_prompt += self.event.search(event,depth,output_type = "prompt")
         
         system_prompt = f'''
 你是一个聊天机器人, 相比你的大模型记忆来说, 下面的事件和概念陈述更加重要.
@@ -98,11 +97,11 @@ class Memory():
 
         entity_graph_entity = []
         for entity in message_dict.get("entities"):
-            entity_graph_entity.append(self.entity_graph.search(entity,depth,output_type = "entity"))
+            entity_graph_entity.append(self.entity.search(entity,depth,output_type = "entity"))
             
         event_graph_entity = []
         for event in message_dict.get("events"):
-            event_graph_entity.append(self.event_graph.search(event,depth,output_type = "entity"))
+            event_graph_entity.append(self.event.search(event,depth,output_type = "entity"))
         print(event_graph_entity,'event_graph_entity')
         print(entity_graph_entity,'entity_graph_entity')
 
